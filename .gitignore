@@ -1,0 +1,18 @@
+# Google Apps Script / clasp
+.clasp.json
+
+# Environment / secrets
+.env
+.env.*
+*.key
+*.pem
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+*.log
