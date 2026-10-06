@@ -112,14 +112,6 @@ function getNormalQuestionsBeforePhoto_() {
 }
 
 /**
- * 備考欄質問
- */
-function getRemarksQuestion_() {
-  return getActiveQuestions_()
-    .find(q => q.itemKey === 'remarks') || null;
-}
-
-/**
  * 応募フロー開始
  */
 function startApplicationFlow_(
@@ -168,7 +160,6 @@ function createInitialApplicationState_(
     totalSteps: getMaxApplicationSteps_(),
     photoCount: 0,
     facePhotoStatus: '',
-    fullBodyPhotoStatus: '',
     extraAnswers: '{}',
     applicationMessage: '',
     age: '',
@@ -470,68 +461,6 @@ function moveToNextQuestion_(
 }
 
 /**
- * 備考欄回答処理
- *
- * 【注】応募フロー簡略化（V2改修・2026/10）により、この関数は
- * 現在どこからも呼び出されていません（未使用）。備考欄質問は
- * 6_ApplicationQuestions.gs の sendConfirmQuestion_ /
- * handleConfirmAnswer_（固定文言の「事前確認事項」）に置き換わりました。
- * 既存データ互換性のため関数定義自体は削除せず残しています。
- */
-function handleRemarksAnswer_(
-  userId,
-  displayName,
-  replyToken,
-  state,
-  text
-) {
-  const remarksQuestion =
-    getRemarksQuestion_();
-
-  if (!remarksQuestion) {
-    completeApplication_(
-      userId,
-      displayName,
-      replyToken,
-      state
-    );
-
-    return;
-  }
-
-  if (!isValidTextAnswer_(text, remarksQuestion.required)) {
-    replyText_(
-      replyToken,
-      [
-        '⚠️ 必須項目です。',
-        '入力をお願いします。',
-        '',
-        `${getRemarksProgressText_(state)}${cleanQuestionText_(remarksQuestion.questionText)}`
-      ].join('\n'),
-      'EMPTY_REMARKS_ANSWER_ERROR',
-      userId
-    );
-
-    return;
-  }
-
-  const updatedState =
-    applyAnswerToState_(
-      state,
-      remarksQuestion,
-      text,
-      displayName
-    );
-
-  completeApplication_(
-    userId,
-    displayName,
-    replyToken,
-    updatedState
-  );
-}
-
-/**
  * 文字入力の必須チェック
  */
 function isValidTextAnswer_(
@@ -592,7 +521,6 @@ function applyAnswerToState_(
     media: state.media || extraAnswers['募集媒体'] || '',
     photoCount: Number(state.photoCount || 0),
     facePhotoStatus: state.facePhotoStatus || '',
-    fullBodyPhotoStatus: state.fullBodyPhotoStatus || '',
     extraAnswers: JSON.stringify(extraAnswers),
     applicationMessage: mergedApplicationMessage,
     age: normalizedApplicant.age,

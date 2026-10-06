@@ -13,25 +13,14 @@
  */
 
 /**
- * 顔写真依頼メッセージ
- *
- * 【注】応募フロー簡略化（V2改修・2026/10）により未使用。
- * 写真提出メッセージは getApplicationPhotoMessage_ を使用する。
- * 既存データ互換性のため関数定義は削除せず残す。
- */
-function getFacePhotoMessage_(state) {
-  return buildPhotoRequestMessage_(
-    state,
-    1,
-    FACE_PHOTO_MESSAGE
-  );
-}
-
-/**
  * 全身写真依頼メッセージ
  *
- * 【注】応募フロー簡略化（V2改修・2026/10）により未使用。
- * 既存データ互換性のため関数定義は削除せず残す。
+ * 【注】現在の1枚写真フローでは新規に呼ばれることはないが、
+ * 3_LineWebhook.gs の routeTextAnswerByState_ /
+ * handleUnsupportedMessageDuringPhoto_ が、過去（2枚写真フロー時代）に
+ * STATUS_WAIT_FULL_BODY_PHOTO のまま残っている可能性のある古い
+ * userState を防御的に処理するために参照している。そのため削除しない
+ * （後方互換のためのコード）。
  */
 function getFullBodyPhotoMessage_(state) {
   return buildPhotoRequestMessage_(
@@ -44,10 +33,8 @@ function getFullBodyPhotoMessage_(state) {
 /**
  * 写真依頼メッセージ共通作成
  *
- * 【注】応募フロー簡略化（V2改修・2026/10）により、
- * getFacePhotoMessage_ / getFullBodyPhotoMessage_ 経由でのみ
- * 参照される（どちらも未使用）。新しい写真提出メッセージは
- * getApplicationPhotoMessage_ を使用する。
+ * 【注】getFullBodyPhotoMessage_（後方互換用）から参照される共通ヘルパー。
+ * 新しい写真提出メッセージは getApplicationPhotoMessage_ を使用する。
  */
 function buildPhotoRequestMessage_(
   state,
@@ -162,10 +149,11 @@ function isWaitingPhotoStatus_(status) {
 /**
  * 写真受信後の状態を作成
  *
- * 方針（V2改修・2026/10：応募フロー簡略化）：
+ * 方針（1枚写真フロー）：
  * - 写真は1枚のみ。受信した1枚を facePhotoStatus に記録する。
- * - fullBodyPhotoStatus は今回のフローでは使用しない
- *   （既存データ互換性のためフィールド自体は残す。常に未設定のまま）。
+ * - fullBodyPhotoStatus フィールドは2026/10の列削除に伴い廃止した
+ *   （以前は「常に未設定のまま残す」互換フィールドだったが、今回の
+ *   スキーマ簡素化で完全に削除した）。
  * - ステータス遷移は行わない（受信後はこのまま completeApplication_
  *   を呼ぶため、呼び出し元の handleImageMessage_ 側で完結する）。
  */
@@ -176,95 +164,4 @@ function buildPhotoReceivedState_(state) {
     facePhotoStatus: PHOTO_RECEIVED_TEXT,
     updatedAt: new Date().toISOString()
   };
-}
-
-/**
- * 顔写真受信後、全身写真へ進む
- *
- * 【注】応募フロー簡略化（V2改修・2026/10）により、
- * handleImageMessage_ から呼ばれなくなり未使用。
- * 既存データ互換性のため関数定義は削除せず残す。
- */
-function proceedToFullBodyPhoto_(
-  userId,
-  replyToken,
-  updatedState
-) {
-  upsertUserManagement_(
-    updatedState
-  );
-
-  replyText_(
-    replyToken,
-    getFullBodyPhotoMessage_(updatedState),
-    'FULL_BODY_PHOTO_REQUEST_ERROR',
-    userId
-  );
-}
-
-/**
- * 全身写真受信後、備考欄または完了へ進む
- *
- * 【注】応募フロー簡略化（V2改修・2026/10）により未使用。
- * 既存データ互換性のため関数定義は削除せず残す。
- */
-function proceedAfterFullBodyPhoto_(
-  userId,
-  displayName,
-  replyToken,
-  updatedState
-) {
-  const remarksQuestion =
-    getRemarksQuestion_();
-
-  if (remarksQuestion) {
-    proceedToRemarksQuestion_(
-      userId,
-      replyToken,
-      updatedState,
-      remarksQuestion
-    );
-
-    return;
-  }
-
-  completeApplication_(
-    userId,
-    displayName,
-    replyToken,
-    updatedState
-  );
-}
-
-/**
- * 備考欄へ進む
- *
- * 【注】応募フロー簡略化（V2改修・2026/10）により未使用。
- * 既存データ互換性のため関数定義は削除せず残す。
- */
-function proceedToRemarksQuestion_(
-  userId,
-  replyToken,
-  updatedState,
-  remarksQuestion
-) {
-  updatedState.status =
-    STATUS_WAIT_REMARKS;
-
-  updatedState.currentQuestionNo =
-    remarksQuestion.order;
-
-  updatedState.updatedAt =
-    new Date().toISOString();
-
-  upsertUserManagement_(
-    updatedState
-  );
-
-  replyText_(
-    replyToken,
-    `${getRemarksProgressText_(updatedState)}${cleanQuestionText_(remarksQuestion.questionText)}`,
-    'REMARKS_REQUEST_ERROR',
-    userId
-  );
 }

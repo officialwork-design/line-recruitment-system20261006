@@ -44,19 +44,6 @@ function getQuestionProgressText_(question, state) {
 }
 
 /**
- * 備考欄の進捗テキスト
- *
- * 【注】応募フロー簡略化（V2改修・2026/10）により未使用。
- * 事前確認事項の進捗テキストは getConfirmProgressText_ を使用する。
- */
-function getRemarksProgressText_(state) {
-  const total =
-    getTotalApplicationSteps_(state);
-
-  return `📮 質問 ${total} / ${total}\n\n`;
-}
-
-/**
  * 事前確認事項の質問文言（応募フロー簡略化・2026/10追加）
  *
  * 方針：

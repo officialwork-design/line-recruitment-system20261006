@@ -11,6 +11,82 @@ function getOrCreateSheet_(ss, name) {
 }
 
 /**
+ * 表形式シートの2行目に「最新V2説明行」を安全に保証する共通ヘルパー。
+ *
+ * 方針（2026/10改訂・説明行統一）：
+ * 最終仕様は「1行目=最新ヘッダー／2行目=各列の説明／3行目以降=実データ」。
+ * ただし再実行のたびに説明行を増殖させず、かつ既存の実データ行を
+ * 絶対に説明行で上書きしないことを最優先する。
+ *
+ * 判定ロジック：
+ * - 2行目が存在しない（新規シート）→ そのまま2行目に説明行を書く
+ *   （保護すべきデータが無い）。
+ * - 2行目が空白行 → 同上、そのまま2行目に説明行を書く。
+ * - 2行目が「今回書こうとしている説明行」と完全一致 → 既に説明行が
+ *   設定済みとみなし、行を増やさずその場で上書き（内容的には無変化、
+ *   または文言更新のみ）。
+ * - 上記のいずれにも該当しない → 既存の実データ行である可能性がある
+ *   ため、必ず「データ」側として扱い、2行目の手前に新しい行を挿入して
+ *   から説明行を書く（既存データは3行目以降へ安全に押し下げられる）。
+ *   判定に迷うケースも必ずこちら側（行を挿入する側）に倒す。
+ *
+ * @param {Sheet} sheet 対象シート
+ * @param {Array} descriptionValues 最新の説明行（ヘッダーと同じ列数）
+ * @return {boolean} true = 既存データ保護のため行を挿入した／false = 挿入なし
+ */
+function ensureDescriptionRow_(sheet, descriptionValues) {
+  if (!sheet || !descriptionValues || descriptionValues.length === 0) {
+    return false;
+  }
+
+  const columnCount = descriptionValues.length;
+  const lastRow = sheet.getLastRow();
+
+  let insertedRow = false;
+
+  if (lastRow >= 2) {
+    const currentRow2 =
+      sheet.getRange(2, 1, 1, columnCount).getValues()[0];
+
+    const currentRow2Trimmed =
+      currentRow2.map(v => String(v || '').trim());
+
+    const isBlankRow2 =
+      currentRow2Trimmed.every(v => v === '');
+
+    const isAlreadyDescriptionRow =
+      !isBlankRow2 &&
+      descriptionValues.every(
+        (v, i) => String(v || '').trim() === currentRow2Trimmed[i]
+      );
+
+    if (!isBlankRow2 && !isAlreadyDescriptionRow) {
+      // 2行目は既存の実データとみなし、保護のため手前に新しい行を挿入する。
+      // （挿入された新しい2行目は、挿入元のセルの書式・入力規則を
+      // 引き継ぐ場合があるため、この後の clearDataValidations() で
+      // 必ず解除する）。
+      sheet.insertRowBefore(2);
+      insertedRow = true;
+    }
+  }
+
+  const descriptionRange =
+    sheet.getRange(2, 1, 1, columnCount);
+
+  // 2行目は説明専用とし、データ用の入力規則（プルダウン・チェックボックス等）
+  // を一切残さない。旧バージョンで2行目がデータ行だった頃に設定された
+  // 入力規則がセルに残ったままになっている場合があり、それを解除せずに
+  // 説明文を書き込むと「入力規則に違反しています」というエラーで
+  // setup自体が失敗する（2026/10・質問設定E2で発生した不具合）。
+  // clearDataValidations() は入力規則のみを解除し、背景色・文字色・
+  // 折り返しなどの書式は変更しない。
+  descriptionRange.clearDataValidations();
+  descriptionRange.setValues([descriptionValues]);
+
+  return insertedRow;
+}
+
+/**
  * JSON安全パース
  */
 function parseJsonSafe_(text) {
@@ -199,6 +275,30 @@ function errorLog_(
 /**
  * ログヘッダー保証
  */
+/**
+ * エラーログ・処理ログ共通の説明行（2行目）配列
+ * （11_SetupSpreadsheet.gs の setupErrorLogSheetForRecruit_ /
+ * setupProcessLogSheetForRecruit_ と必ず一致させること）
+ */
+function getLogDescriptionRow_() {
+  return [
+    '自動',
+    'システム内部管理',
+    'エラー内容／ログ内容',
+    'LINEから取得（任意）',
+    '補足メモ（任意）'
+  ];
+}
+
+/**
+ * ログシート（エラーログ・処理ログ）のヘッダー保証
+ *
+ * 方針（2026/10改訂・説明行統一）：1行目＝最新ヘッダー／2行目＝最新説明／
+ * 3行目以降＝ログ（追記専用）。appendRow() は常に最終行の次へ追記する
+ * ため、2行目に説明行を挿入しても追記処理自体は影響を受けない。
+ * 2行目は ensureDescriptionRow_ により、既存のログデータ行を保護
+ * しながら安全に挿入・更新する。
+ */
 function ensureLogHeader_(sheet) {
   if (!sheet) return;
 
@@ -213,6 +313,8 @@ function ensureLogHeader_(sheet) {
         'メモ'
       ]]);
   }
+
+  ensureDescriptionRow_(sheet, getLogDescriptionRow_());
 }
 
 /**
@@ -478,159 +580,12 @@ function alert_(message) {
 }
 
 /**
- * ============================================================
- * V2ヘッダー追記方式 共通ユーティリティ（2026/10 V2移行改修）
- * ============================================================
- *
- * 方針：
- * - 旧バージョン（本番からコピーされた可能性のある既存ヘッダー・
- *   既存データ）は一切削除・上書き・移動しない。
- * - V2のヘッダーは「既存データの最終行の次」に追記する。
- *   シートが空（新規）の場合はそのまま1行目へ作成する。
- * - setupを何度再実行してもV2ヘッダーを増殖させない
- *   （既に存在する場合はそれを検出して再利用する）。
- * - 識別方法：シート内でヘッダー配列（各セル文字列）が完全一致する
- *   「最も下側の行」をV2ヘッダーとして扱う。
- *   Script Propertiesに行番号をキャッシュして毎回のフルスキャンを
- *   避けるが、キャッシュは必ず実際のシート内容と突き合わせて検証し、
- *   一致しない場合はスキャンし直す（スプレッドシートを複製した場合、
- *   コピー後の新しいスクリプトプロジェクトにはScript Propertiesの
- *   キャッシュが存在しないため、この検証つきスキャンが唯一の
- *   信頼できる手段となる）。
- */
-
-/**
- * ヘッダー配列同士が完全一致するか判定
- * （前後の空白を除去したうえで文字列として比較）
- */
-function headersEqual_(a, b) {
-  if (!a || !b || a.length !== b.length) return false;
-
-  for (let i = 0; i < b.length; i++) {
-    if (String(a[i] || '').trim() !== String(b[i] || '').trim()) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-/**
- * シート内で、指定したヘッダー配列と完全一致する最も下側の行番号を探す。
- * 見つからない場合は0を返す。
- */
-function findLatestHeaderRow_(sheet, expectedHeaders) {
-  if (!sheet || !expectedHeaders || expectedHeaders.length === 0) {
-    return 0;
-  }
-
-  const lastRow = sheet.getLastRow();
-
-  if (lastRow < 1) return 0;
-
-  const values =
-    sheet
-      .getRange(1, 1, lastRow, expectedHeaders.length)
-      .getValues();
-
-  for (let r = values.length - 1; r >= 0; r--) {
-    if (headersEqual_(values[r], expectedHeaders)) {
-      return r + 1;
-    }
-  }
-
-  return 0;
-}
-
-/**
- * V2ヘッダー行を解決する（Script Propertiesキャッシュ＋検証つきフォール
- * バックスキャン）。見つからない場合は0を返す（＝V2ヘッダー未作成）。
- */
-function resolveV2HeaderRow_(sheet, expectedHeaders) {
-  if (!sheet) return 0;
-
-  const cacheKey = `v2HeaderRow:${sheet.getName()}`;
-  const props = PropertiesService.getScriptProperties();
-  const cached = Number(props.getProperty(cacheKey) || 0);
-
-  if (cached > 0 && cached <= sheet.getLastRow()) {
-    const cachedValues =
-      sheet
-        .getRange(cached, 1, 1, expectedHeaders.length)
-        .getValues()[0];
-
-    if (headersEqual_(cachedValues, expectedHeaders)) {
-      return cached;
-    }
-  }
-
-  const found = findLatestHeaderRow_(sheet, expectedHeaders);
-
-  if (found > 0) {
-    props.setProperty(cacheKey, String(found));
-  }
-
-  return found;
-}
-
-/**
- * V2ヘッダーブロックを保証する（冪等）。
- *
- * - 既にV2ヘッダー（expectedHeadersと完全一致する行）が存在する場合は
- *   何もせず、その行番号を返す。
- * - 存在しない場合は、現在の最終行の次（シートが空なら1行目）に
- *   ヘッダー行（＋noteRowが指定されていれば説明行）を新規作成する。
- *   既存データは一切変更しない。
- *
- * 戻り値：{ headerRow, dataStartRow, created }
- *   headerRow    … ヘッダー行の行番号
- *   dataStartRow … データ入力開始行（ヘッダーのみなら headerRow+1、
- *                  説明行ありなら headerRow+2）
- *   created      … 今回新規作成したか（false＝既存のV2ヘッダーを再利用）
- */
-function ensureV2HeaderBlock_(sheet, expectedHeaders, noteRow) {
-  const existing = resolveV2HeaderRow_(sheet, expectedHeaders);
-  const blockSize = noteRow ? 2 : 1;
-
-  if (existing > 0) {
-    return {
-      headerRow: existing,
-      dataStartRow: existing + blockSize,
-      created: false
-    };
-  }
-
-  const headerRow = sheet.getLastRow() + 1;
-
-  sheet
-    .getRange(headerRow, 1, 1, expectedHeaders.length)
-    .setValues([expectedHeaders]);
-
-  if (noteRow) {
-    sheet
-      .getRange(headerRow + 1, 1, 1, noteRow.length)
-      .setValues([noteRow]);
-  }
-
-  PropertiesService
-    .getScriptProperties()
-    .setProperty(`v2HeaderRow:${sheet.getName()}`, String(headerRow));
-
-  return {
-    headerRow,
-    dataStartRow: headerRow + blockSize,
-    created: true
-  };
-}
-
-/**
  * 応募管理・対応管理のNo列の値が「有効なデータ行」かどうかを判定する。
  *
- * V2ヘッダー追記方式では、シートの途中（旧データと新データの境目）に
- * もう1組のヘッダー行・説明行が挟まる。これらの行のNo列には
- * "No"（ヘッダー文字列）や "自動"（説明文）といった非空文字列が
- * 入っているため、「空でなければデータ行とみなす」という単純な判定だと
- * ヘッダー・説明行まで誤ってデータ行として扱ってしまう。
+ * 対応管理・対応履歴では、No列の空でない値のうち "No"（ヘッダー文字列）
+ * や "自動"（説明文）のような非データ文字列が紛れ込むことがあるため、
+ * 「空でなければデータ行とみなす」という単純な判定だとヘッダー・説明行
+ * まで誤ってデータ行として扱ってしまう。
  *
  * 有効な対応管理Noは「数値」または「問い合わせ-」で始まる文字列のみ
  * なので、それ以外（"No" や "自動" など）は確実に除外する。

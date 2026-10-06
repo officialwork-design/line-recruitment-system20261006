@@ -72,7 +72,6 @@ const MEDIA_OTHER_CHOICES = [
 /**
  * 写真関連
  */
-const FACE_PHOTO_MESSAGE = '📸 顔が写ったお写真を１枚お送りください。';
 const FULL_BODY_PHOTO_MESSAGE = '📸 全身が写ったお写真を1枚お送りください。';
 const PHOTO_FILE_NOTE = '対応形式：jpg / jpeg / png';
 const PHOTO_RECEIVED_TEXT = '受信済み';

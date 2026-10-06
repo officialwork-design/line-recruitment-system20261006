@@ -171,10 +171,7 @@ function sendLineMessageToContacts_(
 /**
  * 送信対象取得
  *
- * V2移行（2026/10）：LINEメッセージの送信対象は、本番からコピーされた
- * 可能性のある連絡先シートの旧データ領域を含めず、必ずV2データ領域
- * （V2ヘッダーの次の行以降）のみから選定する。V2ヘッダーが見つからない
- * 場合は、安全側に倒して送信対象なし（0件）として扱う。
+ * 連絡先シートは1行目＝最新ヘッダー、2行目＝最新説明、3行目以降＝データ領域。
  */
 function getTargetContactsByType_(type) {
   const ss =
@@ -189,15 +186,8 @@ function getTargetContactsByType_(type) {
     );
   }
 
-  const headerRow =
-    resolveV2HeaderRow_(sheet, getContactHeaderDefinition_());
-
-  if (headerRow === 0) {
-    return [];
-  }
-
-  const dataStartRow =
-    headerRow + 2;
+  const headerRow = 1;
+  const dataStartRow = 3;
 
   const lastRow =
     sheet.getLastRow();
@@ -375,10 +365,8 @@ function installUnappliedFollowupTrigger() {
 }
 
 /**
- * V2移行（2026/10）：追客（未応募者へのリマインド）の自動送信対象も、
- * 旧データ領域（本番からコピーされた可能性がある連絡先）には一切
- * 送信しない。必ずV2データ領域のみを対象にする。V2ヘッダーが見つから
- * ない場合は、安全側に倒して何もしない。
+ * 追客（未応募者へのリマインド）の自動送信。
+ * 連絡先シートは1行目＝最新ヘッダー、2行目＝最新説明、3行目以降＝データ領域。
  */
 function sendUnappliedFollowupMessages() {
   const ss =
@@ -393,15 +381,8 @@ function sendUnappliedFollowupMessages() {
 
   ensureContactHeader_();
 
-  const headerRow =
-    resolveV2HeaderRow_(sheet, getContactHeaderDefinition_());
-
-  if (headerRow === 0) {
-    return;
-  }
-
-  const dataStartRow =
-    headerRow + 2;
+  const headerRow = 1;
+  const dataStartRow = 3;
 
   const lastRow =
     sheet.getLastRow();

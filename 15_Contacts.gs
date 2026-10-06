@@ -93,13 +93,25 @@ function getContactHeaderDefinition_() {
 }
 
 /**
+ * 連絡先シートの説明行（2行目）配列
+ * （11_SetupSpreadsheet.gs の setupContactSheetForRecruit_ と
+ * 必ず一致させること）
+ */
+function getContactDescriptionRow_() {
+  return [
+    'LINEから取得', 'LINEから取得', '自動（友だち追加時）',
+    '自動（メッセージ受信時）', 'システム内部管理', 'システム内部管理',
+    'システム内部管理', '応募管理と連携', '手入力', '自動'
+  ];
+}
+
+/**
  * 連絡先の共通登録/更新処理
  *
- * V2移行（2026/10）：連絡先シートの旧データ領域（本番からコピーされた
- * 可能性のある既存の連絡先）には一切書き込まない。新規の登録・更新は
- * 必ずV2ヘッダー以降のデータ領域内でのみ行う（同一ユーザーIDの行が
- * 旧データ領域に存在していても、それは更新せず、V2データ領域に
- * 新しい行を作成する）。
+ * 方針（2026/10改訂・説明行統一）：連絡先シートは「1行目＝最新ヘッダー／
+ * 2行目＝最新説明／3行目以降＝データ」に統一する。既存データ行は削除せず、
+ * 同一ユーザーIDの行が見つかればそれを更新し、無ければ末尾に追加する。
+ * 検索・走査は説明行を誤ってデータとして扱わないよう3行目以降のみ行う。
  */
 function upsertContact_(params) {
   const ss =
@@ -113,18 +125,8 @@ function upsertContact_(params) {
 
   ensureContactHeader_();
 
-  const block =
-    ensureV2HeaderBlock_(
-      sheet,
-      getContactHeaderDefinition_(),
-      getContactNoteRowDefinition_()
-    );
-
-  const headerRow =
-    block.headerRow;
-
-  const dataStartRow =
-    block.dataStartRow;
+  const headerRow = 1;
+  const dataStartRow = 3;
 
   const headers =
     sheet
@@ -301,32 +303,15 @@ function upsertContact_(params) {
 }
 
 /**
- * 連絡先シートの説明行（備考）
- * （11_SetupSpreadsheet.gs の setupContactSheetForRecruit_ と
- * 必ず一致させること）
- */
-function getContactNoteRowDefinition_() {
-  return [
-    'LINE userId',
-    '取得できた場合のみ',
-    'follow時に自動',
-    'メッセージ受信時に自動',
-    '友だち追加済み/やりとりあり/応募中/応募完了/ブロック不明',
-    '未応募/応募中/応募完了',
-    '未開始/2日送信済/5日送信済/7日送信済/停止/送信失敗',
-    '応募完了時に自動',
-    '自由記入',
-    '自動'
-  ];
-}
-
-/**
  * 連絡先シートのヘッダーを保証
  *
- * V2移行（2026/10）：友だち追加・メッセージ受信のたびに毎回呼ばれる
- * 関数であるため、旧実装のように1〜2行目を無条件で上書きすることは
- * しない。ensureV2HeaderBlock_ により、既にV2ヘッダーが存在する場合は
- * 何もしない（旧データ領域には一切触れない）。
+ * 方針（2026/10改訂・説明行統一）：友だち追加・メッセージ受信のたびに
+ * 毎回呼ばれる関数であるため、1行目が既に最新ヘッダーと完全一致している
+ * 場合は書き込みをスキップする（無駄な書き込みを避けるため）。一致しない
+ * 場合（初回作成・ヘッダー定義変更後の初回アクセス時）のみ1行目を
+ * 最新定義で上書きする。2行目の説明行は ensureDescriptionRow_ により、
+ * 既存の実データ行を保護しながら安全に挿入・更新する
+ * （3行目以降の既存データ行には一切触れない）。
  */
 function ensureContactHeader_() {
   const ss =
@@ -341,42 +326,52 @@ function ensureContactHeader_() {
   const headers =
     getContactHeaderDefinition_();
 
-  const notes =
-    getContactNoteRowDefinition_();
+  const headerRow = 1;
+  const dataStartRow = 3;
 
-  const block =
-    ensureV2HeaderBlock_(sheet, headers, notes);
+  const currentHeaderRowValues =
+    sheet.getLastColumn() > 0
+      ? sheet
+          .getRange(headerRow, 1, 1, sheet.getLastColumn())
+          .getValues()[0]
+          .map(h => String(h || '').trim())
+      : [];
 
-  if (block.headerRow === 1) {
-    sheet.setFrozenRows(2);
+  const headerMatches =
+    currentHeaderRowValues.length === headers.length &&
+    headers.every((h, i) => currentHeaderRowValues[i] === h);
+
+  if (!headerMatches) {
+    sheet
+      .getRange(headerRow, 1, 1, headers.length)
+      .setValues([headers]);
   }
 
+  ensureDescriptionRow_(sheet, getContactDescriptionRow_());
+
+  sheet.setFrozenRows(2);
+
   const formatRows =
-    Math.max(sheet.getMaxRows() - block.headerRow + 1, 1);
+    Math.max(sheet.getMaxRows() - headerRow + 1, 1);
 
   sheet
-    .getRange(block.headerRow, 1, formatRows, headers.length)
+    .getRange(headerRow, 1, formatRows, headers.length)
     .setWrap(true);
 
   const dataRows =
-    Math.max(sheet.getMaxRows() - block.dataStartRow + 1, 1);
+    Math.max(sheet.getMaxRows() - dataStartRow + 1, 1);
 
   sheet
-    .getRange(block.dataStartRow, 3, dataRows, 2)
+    .getRange(dataStartRow, 3, dataRows, 2)
     .setNumberFormat('yyyy/mm/dd hh:mm:ss');
 
   sheet
-    .getRange(block.dataStartRow, 10, dataRows, 1)
+    .getRange(dataStartRow, 10, dataRows, 1)
     .setNumberFormat('yyyy/mm/dd hh:mm:ss');
 }
 
 /**
  * ユーザーIDから連絡先行を探す
- *
- * V2移行（2026/10）：startRow（通常はV2データ開始行）より前の行、
- * つまり旧データ領域は検索対象に含めない。旧データ領域に同一の
- * ユーザーIDが存在していても、それを更新対象にはしない（新しい行を
- * V2データ領域に作成する）。
  */
 function findContactRowByUserId_(
   sheet,

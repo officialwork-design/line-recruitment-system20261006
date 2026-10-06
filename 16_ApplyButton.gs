@@ -208,7 +208,9 @@ function sendApplyButtonToSelectedUser() {
   const row =
     sheet.getActiveRange().getRow();
 
-  if (row <= 1) {
+  // ユーザー管理は1行目＝ヘッダー、2行目＝説明行のため、
+  // データ行（3行目以降）以外が選択された場合は送信しない。
+  if (row <= 2) {
     ui.alert(
       '送信したいユーザーの行を選択してください。'
     );
@@ -326,11 +328,11 @@ function markApplyButtonSent_(
       sheet,
       'ユーザーID',
       userId,
-      2
+      3
     ) ||
-    Math.max(sheet.getLastRow() + 1, 2);
+    Math.max(sheet.getLastRow() + 1, 3);
 
-  if (!findRowByHeaderValue_(sheet, 'ユーザーID', userId, 2)) {
+  if (!findRowByHeaderValue_(sheet, 'ユーザーID', userId, 3)) {
     setCellValueByHeader_(
       sheet,
       headers,

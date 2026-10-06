@@ -53,7 +53,6 @@ function upsertUserManagement_(data) {
     totalSteps: data.totalSteps || '',
     photoCount: data.photoCount || 0,
     facePhotoStatus: data.facePhotoStatus || '',
-    fullBodyPhotoStatus: data.fullBodyPhotoStatus || '',
     extraAnswers: data.extraAnswers || '{}',
     updatedAt: new Date().toISOString(),
     applicationMessage: data.applicationMessage || '',
@@ -111,8 +110,8 @@ function markUserDone_(userId, applicationNo) {
  * ScriptProperties のユーザー状態をユーザー管理シートへ同期
  *
  * 軽量化：
- * - ヘッダーは毎回保証
- * - 必要行だけ setValues
+ * - ヘッダー・説明行は毎回保証（ensureUserManagementHeader_）
+ * - データは3行目以降に必要行だけ setValues
  * - 余った古い行だけ clearContent
  */
 function syncUserStatesToSheet() {
@@ -176,7 +175,6 @@ function syncUserStatesToSheet() {
       setRowValueByHeader_(headers, row, '希望店舗', data.store || '');
       setRowValueByHeader_(headers, row, '写真受信数', data.photoCount || 0);
       setRowValueByHeader_(headers, row, '顔写真状態', data.facePhotoStatus || '');
-      setRowValueByHeader_(headers, row, '全身写真状態', data.fullBodyPhotoStatus || '');
       setRowValueByHeader_(headers, row, '追加回答JSON', data.extraAnswers || '{}');
       setRowValueByHeader_(headers, row, '更新日', data.updatedAt || '');
       setRowValueByHeader_(headers, row, '応募メッセージ', data.applicationMessage || '');
@@ -192,7 +190,7 @@ function syncUserStatesToSheet() {
   if (rows.length > 0) {
     sheet
       .getRange(
-        2,
+        3,
         1,
         rows.length,
         headers.length
@@ -204,7 +202,7 @@ function syncUserStatesToSheet() {
     sheet.getLastRow();
 
   const clearStartRow =
-    rows.length + 2;
+    rows.length + 3;
 
   if (lastRow >= clearStartRow) {
     sheet
@@ -223,7 +221,42 @@ function syncUserStatesToSheet() {
 }
 
 /**
+ * ユーザー管理シートの説明行（2行目）配列
+ * （11_SetupSpreadsheet.gs の setupUserManagementSheetForRecruit_ と
+ * 必ず一致させること）
+ */
+function getUserManagementDescriptionRow_() {
+  return [
+    'LINEから取得',
+    'LINEから取得',
+    'システム内部管理',
+    'システム内部管理',
+    '応募回答から取得',
+    '応募回答から取得',
+    '自動',
+    'システム内部管理（受信済み/未受信）',
+    'JSON',
+    '自動',
+    '応募回答から取得',
+    '応募回答から取得',
+    '応募回答から取得',
+    'システム内部管理（TRUE/FALSE）',
+    'システム内部管理',
+    '応募回答から取得',
+    'システム内部管理',
+    '日時',
+    'システム内部管理'
+  ];
+}
+
+/**
  * ユーザー管理シートのヘッダー保証
+ *
+ * 方針（2026/10改訂・説明行統一）：1行目＝最新ヘッダー／2行目＝最新説明／
+ * 3行目以降＝ユーザー状態（ライブミラー）。2行目の説明行は
+ * ensureDescriptionRow_ により、syncUserStatesToSheet() の全行再生成
+ * を挟んでも維持されるよう、既存データを保護しながら安全に
+ * 挿入・更新する。
  */
 function ensureUserManagementHeader_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -243,7 +276,6 @@ function ensureUserManagementHeader_() {
     '希望店舗',
     '写真受信数',
     '顔写真状態',
-    '全身写真状態',
     '追加回答JSON',
     '更新日',
     '応募メッセージ',
@@ -261,10 +293,13 @@ function ensureUserManagementHeader_() {
     .getRange(1, 1, 1, headers.length)
     .setValues([headers]);
 
-  sheet.setFrozenRows(1);
-  sheet.getRange('A:T').setWrap(true);
-  sheet.getRange('K:K').setNumberFormat('yyyy/mm/dd hh:mm:ss');
-  sheet.getRange('S:S').setNumberFormat('yyyy/mm/dd hh:mm:ss');
+  ensureDescriptionRow_(sheet, getUserManagementDescriptionRow_());
+
+  sheet.setFrozenRows(2);
+  sheet.getRange('A:S').setWrap(true);
+  // 日付書式はデータ領域（3行目以降）にのみ適用する。
+  sheet.getRange('J3:J').setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 更新日
+  sheet.getRange('R3:R').setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 応募ボタン送信日時
 
   sheet.autoResizeColumns(1, headers.length);
 }

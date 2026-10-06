@@ -5,26 +5,40 @@
  * 方針：
  * - 新規ファイルは作らない
  * - 既存シートは削除しない
- * - 既存データは残す
+ * - 既存データ行は削除しない
  * - ヘッダー、メモ、入力規則、表示形式は更新する
  * - 本番誤操作防止のため、実行前に確認ダイアログを出す
  *
- * 方針（V2移行・2026/10追記）：
- * - 応募管理／対応管理／連絡先／質問設定／選択肢設定の5シートは、
- *   旧バージョンのヘッダー・既存データ（本番からコピーされた可能性が
- *   あるものを含む）を一切削除・上書き・移動しない「V2ヘッダー追記
- *   方式」に変更した（10_CommonUtils.gs の ensureV2HeaderBlock_ 等を
- *   参照）。シートが空（新規）の場合は従来通り1行目から作成される。
- * - 既にV2ヘッダーが存在する場合（setup再実行時、または既にV2として
- *   一度セットアップ済みの場合）は、それを検出して再利用し、
- *   ヘッダー・初期データを重複生成しない。
- * - 上記5シート以外（設定／対応履歴／ユーザー管理／エラーログ／
- *   処理ログ／仕様書／運用メモ）は、もともと「現在の状態を都度
- *   全体書き換えするシート」（設定・ユーザー管理）か、「常に末尾へ
- *   追記するだけで途中に別ヘッダーを挟む必要がないシート」
- *   （対応履歴・エラーログ・処理ログ）、または単なる参考資料
- *   （仕様書・運用メモ）であり、V2ヘッダー追記方式の対象外とした
- *   （詳細はREADME.mdの「V2スプレッドシート移行方式」を参照）。
+ * 方針（V2説明行統一・2026/10改訂）：
+ * - 複数ヘッダーをシート内に追記して「旧データ領域」と「V2データ領域」を
+ *   物理的に分離する方式（旧設計）は廃止した。
+ * - 最終仕様：通常の表形式シートは常に「1行目＝最新のV2ヘッダー」
+ *   「2行目＝各列の最新説明」「3行目以降＝実データ領域」とする
+ *   （設定・仕様書・運用メモ等の特殊構造シートは対象外、下記）。
+ *   setupを実行するたびに1行目のヘッダーは最新定義で無条件に上書きし、
+ *   2行目の説明行は共通ヘルパー ensureDescriptionRow_()（10_CommonUtils.gs）
+ *   で安全に保証する。3行目以降の既存データ行は一切変更しない。
+ * - ensureDescriptionRow_() は、2行目が既に実データである場合のみ
+ *   2行目の手前に新しい行を挿入してからデータを押し下げ、既存データを
+ *   保護する。2行目が既に説明行（または空白）の場合は、行を増やさず
+ *   その場で説明文を上書きするだけなので、setup再実行で説明行が
+ *   増殖することはない。
+ * - 既存シート：シート削除・データ行削除は行わない。1〜2行目のみ
+ *   更新し、入力規則・表示形式を最新の列構成に合わせて再適用する。
+ * - 新規シート：シートを作成し、1行目にヘッダー、2行目に説明、
+ *   必要であれば3行目以降に初期値・入力規則・表示形式を書き込む。
+ * - 列を削除した場合、旧データ行はその列の意味とズレて表示されることが
+ *   あるが、これは許容する（旧データ行自体を削除することはしない）。
+ * - 応募管理・対応管理の2シートは、本改訂以前から「1行目＝ヘッダー、
+ *   2行目＝説明行、3行目以降＝実データ」という構成を採用しており、
+ *   この構成はLockServiceによる応募No採番、重複保存防止
+ *   （hasCompletedApplication_ 等）、対応管理同期など複数ファイルに
+ *   またがる冪等性ロジックの前提になっている。今回の改訂後も構成自体は
+ *   変わらないため、この2シートはそのまま3行目開始を維持する（詳細は
+ *   README.mdの「Spreadsheetの構成方針」を参照）。
+ * - 連絡先シートは、前回の改訂で一度「1行目＝ヘッダー／2行目以降＝
+ *   データ」に簡素化したが、今回の改訂で再び「1行目＝ヘッダー／
+ *   2行目＝説明行／3行目以降＝データ」へ統一した。
  */
 
 function setupRecruitSpreadsheet() {
@@ -102,11 +116,27 @@ function setupRecruitSpreadsheet() {
   Logger.log('初期セットアップ完了');
 }
 
+/**
+ * 設定シート
+ *
+ * 方針（2026/10改訂）：
+ * - setupを再実行しても、既に値が入力済みのキー（特に
+ *   LINE_CHANNEL_ACCESS_TOKEN・ADMIN_GROUP_ID）の「値」列は
+ *   絶対に上書き・リセットしない。
+ * - 既存の値が空欄のキーのみ、デフォルト値／プレースホルダー文言で
+ *   補完する。
+ * - ヘッダー行・説明列・備考列は常に最新の定義で更新する。
+ * - デフォルト定義にない既存キー（手動追加分など）は削除せず、
+ *   末尾にそのまま残す。
+ * - 秘密情報（実際のトークン値等）はこの関数のコードにもREADMEにも
+ *   一切書き込まない。
+ */
 function setupConfigSheetForRecruit_(ss) {
   const sheet = recreateSheet_(ss, SHEET_CONFIG);
 
-  const rows = [
-    ['キー', '値', '説明', '備考'],
+  const headerRow = ['キー', '値', '説明', '備考'];
+
+  const defaultRows = [
     ['LINE_CHANNEL_ACCESS_TOKEN', 'ここにLINEチャネルアクセストークンを入力', 'LINE Messaging API チャネルアクセストークン', '必須'],
     ['START_WORD', DEFAULT_START_WORD, '応募開始ワード', '完全一致のみ。誤爆防止のため「応募開始」推奨 / 必須'],
     ['COMPLETE_MESSAGE', '✅ ご応募ありがとうございました！\n\n内容を確認後、担当者よりご連絡いたします。', '応募完了時の自動返信', ''],
@@ -118,28 +148,59 @@ function setupConfigSheetForRecruit_(ss) {
     [CONFIG_ADMIN_GROUP_ID, '', '管理者通知先LINEグループID', '必須']
   ];
 
+  const lastRow = sheet.getLastRow();
+  const existingMap = {};
+
+  if (lastRow >= 2) {
+    sheet
+      .getRange(2, 1, lastRow - 1, 2)
+      .getValues()
+      .forEach(r => {
+        const key = String(r[0] || '').trim();
+        if (!key) return;
+        existingMap[key] = r[1];
+      });
+  }
+
+  const defaultKeys = defaultRows.map(r => r[0]);
+
+  const mergedRows = defaultRows.map(defRow => {
+    const key = defRow[0];
+    const hasExisting = Object.prototype.hasOwnProperty.call(existingMap, key);
+    const existingValue = hasExisting ? existingMap[key] : '';
+    const keepExisting = hasExisting && notBlank_(existingValue);
+
+    return [
+      key,
+      keepExisting ? existingValue : defRow[1],
+      defRow[2],
+      defRow[3]
+    ];
+  });
+
+  // デフォルト定義にない既存キー（手動追加分）は削除せず末尾に残す
+  const extraRows = Object.keys(existingMap)
+    .filter(key => defaultKeys.indexOf(key) === -1)
+    .map(key => [key, existingMap[key], '', '']);
+
+  const allRows =
+    [headerRow].concat(mergedRows, extraRows);
+
   sheet
-    .getRange(1, 1, rows.length, rows[0].length)
-    .setValues(rows);
+    .getRange(1, 1, allRows.length, headerRow.length)
+    .setValues(allRows);
 
   sheet.setFrozenRows(1);
-  sheet.autoResizeColumns(1, rows[0].length);
+  sheet.autoResizeColumns(1, headerRow.length);
 }
 
 /**
  * 質問設定シート
  *
- * 方針（V2移行・2026/10）：
- * - 質問設定シートは「過去ログ」ではなく「現在有効な質問定義」を
- *   保持する設定シートである。旧バージョンの行がそのまま残っていると
- *   getActiveQuestions_() がそれも「有効な質問」として誤って拾って
- *   しまうため、V2のヘッダー・初期データは必ず区別できる位置
- *   （既存データの最終行の次。シートが空なら1行目）に追記し、
- *   getActiveQuestions_() 側もV2ヘッダー以降だけを読むようにしている
- *   （17_QuestionData.gs参照）。
- * - 旧バージョンの行は削除・上書きしない。
- * - 再実行してもV2ヘッダー・初期データが重複生成されないよう、
- *   V2ヘッダーが既に存在する場合は初期データの再投入を行わない。
+ * 方針（2026/10改訂・説明行統一）：1行目＝最新ヘッダー／2行目＝最新説明／
+ * 3行目以降＝質問データ。初期データはシートが元々空だった場合のみ
+ * 3行目以降へ投入する。2行目の説明行は ensureDescriptionRow_ により、
+ * 既存の実データ行を保護しながら安全に挿入・更新する。
  */
 function setupQuestionSheetForRecruit_(ss) {
   const sheet = recreateSheet_(ss, SHEET_QUESTIONS);
@@ -155,6 +216,18 @@ function setupQuestionSheetForRecruit_(ss) {
     '有効'
   ];
 
+  // （17_QuestionData.gs の getQuestionHeaderDefinition_() と必ず一致させること）
+  const descriptionRow = [
+    '質問表示順',
+    'システム内部キー',
+    '管理用項目名',
+    'LINEで表示する質問',
+    '選択ボタン / 文字入力',
+    'TRUE/FALSE',
+    '応募管理で保存する列',
+    'TRUE/FALSE'
+  ];
+
   const defaultRows = [
     [1, 'store', '希望店舗', '希望店舗を選択してください。', '選択ボタン', true, '希望店舗', true],
     [2, 'work_days', '勤務日数', '勤務できる日数を選択してください。', '選択ボタン', true, '勤務日数', true],
@@ -162,34 +235,42 @@ function setupQuestionSheetForRecruit_(ss) {
     [4, 'remarks', '備考欄', '最後に、補足や質問があれば入力してください。\n特になければ「なし」と入力してください。', '文字入力', false, '備考欄', true]
   ];
 
-  const block = ensureV2HeaderBlock_(sheet, headers, null);
+  const hadNoDataRows = sheet.getLastRow() < 2;
 
-  if (block.created) {
+  sheet
+    .getRange(1, 1, 1, headers.length)
+    .setValues([headers]);
+
+  const insertedRow =
+    ensureDescriptionRow_(sheet, descriptionRow);
+
+  if (hadNoDataRows && !insertedRow) {
     sheet
-      .getRange(block.dataStartRow, 1, defaultRows.length, headers.length)
+      .getRange(3, 1, defaultRows.length, headers.length)
       .setValues(defaultRows);
   }
 
-  const dropdownEnd = block.dataStartRow + 997;
+  const dataStartRow = 3;
+  const dropdownEnd = dataStartRow + 997;
 
-  applyDropdown_(sheet, `E${block.dataStartRow}:E${dropdownEnd}`, ['文字入力', '選択ボタン']);
-  applyDropdown_(sheet, `F${block.dataStartRow}:F${dropdownEnd}`, [true, false]);
-  applyDropdown_(sheet, `H${block.dataStartRow}:H${dropdownEnd}`, [true, false]);
+  applyDropdown_(sheet, `E${dataStartRow}:E${dropdownEnd}`, ['文字入力', '選択ボタン']);
+  applyDropdown_(sheet, `F${dataStartRow}:F${dropdownEnd}`, [true, false]);
+  applyDropdown_(sheet, `H${dataStartRow}:H${dropdownEnd}`, [true, false]);
 
-  if (block.headerRow === 1) {
-    sheet.setFrozenRows(1);
-  }
+  sheet.setFrozenRows(2);
 
-  const formatRows = Math.max(sheet.getMaxRows() - block.headerRow + 1, 1);
-  sheet.getRange(block.headerRow, 1, formatRows, headers.length).setWrap(true);
+  const formatRows = Math.max(sheet.getMaxRows() - 1 + 1, 1);
+  sheet.getRange(1, 1, formatRows, headers.length).setWrap(true);
   sheet.autoResizeColumns(1, headers.length);
 }
 
 /**
  * 選択肢設定シート
  *
- * 方針：質問設定シートと同じ理由で、V2ヘッダー・初期データを
- * 既存データの下へ追記する（旧データは削除・上書きしない）。
+ * 方針（2026/10改訂・説明行統一）：質問設定シートと同じ
+ * （1行目＝最新ヘッダー、2行目＝最新説明、3行目以降＝データ、
+ * 既存データは削除・上書きしない。初期データはシートが元々空だった
+ * 場合のみ3行目以降へ投入する）。
  */
 function setupChoiceSheetForRecruit_(ss) {
   const sheet = recreateSheet_(ss, SHEET_CHOICES);
@@ -200,6 +281,15 @@ function setupChoiceSheetForRecruit_(ss) {
     '送信テキスト',
     '表示順',
     '有効'
+  ];
+
+  // （17_QuestionData.gs の getChoiceHeaderDefinition_() と必ず一致させること）
+  const descriptionRow = [
+    '質問設定と紐づくキー',
+    'ユーザーへ表示する名称',
+    'LINE送信時の値',
+    '選択肢の並び順',
+    'TRUE/FALSE'
   ];
 
   const defaultRows = [
@@ -213,42 +303,48 @@ function setupChoiceSheetForRecruit_(ss) {
     ['work_days', '相談したい', '相談したい', 4, true]
   ];
 
-  const block = ensureV2HeaderBlock_(sheet, headers, null);
+  const hadNoDataRows = sheet.getLastRow() < 2;
 
-  if (block.created) {
+  sheet
+    .getRange(1, 1, 1, headers.length)
+    .setValues([headers]);
+
+  const insertedRow =
+    ensureDescriptionRow_(sheet, descriptionRow);
+
+  if (hadNoDataRows && !insertedRow) {
     sheet
-      .getRange(block.dataStartRow, 1, defaultRows.length, headers.length)
+      .getRange(3, 1, defaultRows.length, headers.length)
       .setValues(defaultRows);
   }
 
-  const dropdownEnd = block.dataStartRow + 997;
+  const dataStartRow = 3;
+  const dropdownEnd = dataStartRow + 997;
 
-  applyDropdown_(sheet, `E${block.dataStartRow}:E${dropdownEnd}`, [true, false]);
+  applyDropdown_(sheet, `E${dataStartRow}:E${dropdownEnd}`, [true, false]);
 
-  if (block.headerRow === 1) {
-    sheet.setFrozenRows(1);
-  }
-
+  sheet.setFrozenRows(1);
   sheet.autoResizeColumns(1, headers.length);
 }
 
 /**
  * 応募管理シート
  *
- * 方針（V2移行・2026/10）：
- * - 旧バージョンのヘッダー・既存データ（本番からコピーされた可能性が
- *   あるものを含む）は削除・上書き・移動しない。
- * - V2ヘッダー（＋説明行）は、既存データの最終行の次に追記する。
- *   シートが空（新規）の場合は従来通り1行目に作成する。
- * - 既にV2ヘッダーが存在する場合（setup再実行時）はそれを再利用し、
- *   重複作成しない。
- * - 入力規則・表示形式はV2ヘッダー以降の領域にのみ適用し、
- *   旧データ領域の書式は変更しない。
- * - 応募No採番・hasCompletedApplication_ 等の「過去データも含めて
- *   判定する」処理は、この関数の変更とは独立して
- *   12_ApplicationSheet.gs 側で従来通り3行目から最終行までを対象とする
- *   （途中に挟まるヘッダー・説明行は、No列が数値にならない／
- *   ユーザーIDが一致しないことで自然に除外される）。
+ * 方針（2026/10改訂）：
+ * - このシートは、本改訂以前からの「1行目＝ヘッダー／2行目＝説明行／
+ *   3行目以降＝実データ」という構成を維持する（他の一般シートも今回の
+ *   改訂で同じ構成に統一されたが、こちらは元々この構成だった）。この構成は、応募No採番
+ *   （generateApplicationNo_）・重複保存防止（hasCompletedApplication_／
+ *   countCompletedApplicationsByUserId_）・LockServiceによる排他制御など、
+ *   12_ApplicationSheet.gs・13_SupportSheetSync.gs 側の複数の処理が
+ *   「3行目から最終行まで」を前提に実装されているため、変更すると
+ *   それらの冪等性・重複防止ロジックが壊れるおそれがある。
+ * - setupを再実行するたびに1行目・2行目（ヘッダー・説明行）のみを
+ *   最新定義で上書きし、3行目以降の既存データ行は一切変更しない。
+ * - 1枚写真フローへの簡略化に伴い、旧2枚写真フロー専用列
+ *   「全体写真確認」は削除した。この列を物理的に持っていた旧データ行は、
+ *   削除後の列構成とズレて表示される場合があるが、これは許容する
+ *   （旧データ行自体は削除しない）。
  */
 function setupApplicationSheetForRecruit_(ss) {
   const sheet = recreateSheet_(ss, SHEET_APPLICATIONS);
@@ -268,7 +364,6 @@ function setupApplicationSheetForRecruit_(ss) {
     '応募メッセージ',
     '写真受信数',
     '顔写真確認',
-    '全体写真確認',
     '追加回答',
     '面接担当',
     '名前',
@@ -298,7 +393,6 @@ function setupApplicationSheetForRecruit_(ss) {
     '自動まとめ',
     '自動',
     '受信済み/未受信',
-    '受信済み/未受信',
     '自動JSON',
     '対応管理から連携',
     '対応管理から連携',
@@ -313,35 +407,54 @@ function setupApplicationSheetForRecruit_(ss) {
     '自動'
   ];
 
-  const block = ensureV2HeaderBlock_(sheet, headers, notes);
+  const headerRow = 1;
+  const dataStartRow = 3;
 
-  if (block.headerRow === 1) {
-    sheet.setFrozenRows(2);
-  }
+  sheet
+    .getRange(headerRow, 1, 1, headers.length)
+    .setValues([headers]);
 
-  const formatRows = Math.max(sheet.getMaxRows() - block.headerRow + 1, 1);
-  sheet.getRange(block.headerRow, 1, formatRows, headers.length).setWrap(true);
+  // 2行目（説明行）にデータ用の入力規則が残っていないか必ず解除してから
+  // 説明文を書き込む（旧バージョンで2行目がデータ行だった頃の入力規則が
+  // 残っていると、書き込み時に「入力規則に違反しています」で失敗するため）。
+  sheet
+    .getRange(headerRow + 1, 1, 1, notes.length)
+    .clearDataValidations();
 
-  const dataRows = Math.max(sheet.getMaxRows() - block.dataStartRow + 1, 1);
-  sheet.getRange(block.dataStartRow, 2, dataRows, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 受信日時
-  sheet.getRange(block.dataStartRow, 27, dataRows, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 更新日
+  sheet
+    .getRange(headerRow + 1, 1, 1, notes.length)
+    .setValues([notes]);
 
-  const dStart = block.dataStartRow;
+  sheet.setFrozenRows(2);
+
+  const formatRows = Math.max(sheet.getMaxRows() - headerRow + 1, 1);
+  sheet.getRange(headerRow, 1, formatRows, headers.length).setWrap(true);
+
+  const dataRows = Math.max(sheet.getMaxRows() - dataStartRow + 1, 1);
+  sheet.getRange(dataStartRow, 2, dataRows, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 受信日時
+  sheet.getRange(dataStartRow, 26, dataRows, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 更新日
+
+  const dStart = dataStartRow;
   const dEnd = dStart + 997;
 
-  applyDropdown_(sheet, `N${dStart}:N${dEnd}`, ['受信済み', '未受信']);
-  applyDropdown_(sheet, `O${dStart}:O${dEnd}`, ['受信済み', '未受信']);
-  applyDropdown_(sheet, `S${dStart}:S${dEnd}`, ['', '未設定', '合格', '不合格', '保留']);
-  applyDropdown_(sheet, `T${dStart}:V${dEnd}`, ['', '○', '×']);
-  applyDropdown_(sheet, `W${dStart}:W${dEnd}`, [STATUS_DONE]);
-  applyDropdown_(sheet, `X${dStart}:X${dEnd}`, ['済', '未']);
-  applyDropdown_(sheet, `Y${dStart}:Y${dEnd}`, ['初回', '再応募']);
+  applyDropdown_(sheet, `N${dStart}:N${dEnd}`, ['受信済み', '未受信']); // 顔写真確認
+  applyDropdown_(sheet, `R${dStart}:R${dEnd}`, ['', '未設定', '合格', '不合格', '保留']); // 合否
+  applyDropdown_(sheet, `S${dStart}:U${dEnd}`, ['', '○', '×']); // 面接/体入/本入
+  applyDropdown_(sheet, `V${dStart}:V${dEnd}`, [STATUS_DONE]); // ステータス
+  applyDropdown_(sheet, `W${dStart}:W${dEnd}`, ['済', '未']); // 対応管理反映
+  applyDropdown_(sheet, `X${dStart}:X${dEnd}`, ['初回', '再応募']); // 過去応募者
 
   sheet.autoResizeColumns(1, headers.length);
 }
 
 /**
- * 対応管理シート（V2移行方針は応募管理シートと同様）
+ * 対応管理シート
+ *
+ * 方針（2026/10改訂）：応募管理シートと同じ理由・同じ例外により、
+ * 「1行目＝ヘッダー／2行目＝説明行／3行目以降＝実データ」の構成を
+ * 維持する（13_SupportSheetSync.gs・14_SupportHistory.gs 側の複数の
+ * 処理が3行目開始を前提にしているため）。setup再実行時は1〜2行目のみ
+ * 最新定義で上書きし、3行目以降の既存データは変更しない。
  */
 function setupSupportSheetForRecruit_(ss) {
   const sheet = recreateSheet_(ss, SHEET_SUPPORT);
@@ -380,19 +493,33 @@ function setupSupportSheetForRecruit_(ss) {
     '自動'
   ];
 
-  const block = ensureV2HeaderBlock_(sheet, headers, notes);
+  const headerRow = 1;
+  const dataStartRow = 3;
 
-  if (block.headerRow === 1) {
-    sheet.setFrozenRows(2);
-  }
+  sheet
+    .getRange(headerRow, 1, 1, headers.length)
+    .setValues([headers]);
 
-  const formatRows = Math.max(sheet.getMaxRows() - block.headerRow + 1, 1);
-  sheet.getRange(block.headerRow, 1, formatRows, headers.length).setWrap(true);
+  // 2行目（説明行）にデータ用の入力規則が残っていないか必ず解除してから
+  // 説明文を書き込む（旧バージョンで2行目がデータ行だった頃の入力規則が
+  // 残っていると、書き込み時に「入力規則に違反しています」で失敗するため）。
+  sheet
+    .getRange(headerRow + 1, 1, 1, notes.length)
+    .clearDataValidations();
 
-  const dataRows = Math.max(sheet.getMaxRows() - block.dataStartRow + 1, 1);
-  sheet.getRange(block.dataStartRow, 14, dataRows, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 更新日
+  sheet
+    .getRange(headerRow + 1, 1, 1, notes.length)
+    .setValues([notes]);
 
-  const dStart = block.dataStartRow;
+  sheet.setFrozenRows(2);
+
+  const formatRows = Math.max(sheet.getMaxRows() - headerRow + 1, 1);
+  sheet.getRange(headerRow, 1, formatRows, headers.length).setWrap(true);
+
+  const dataRows = Math.max(sheet.getMaxRows() - dataStartRow + 1, 1);
+  sheet.getRange(dataStartRow, 14, dataRows, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 更新日
+
+  const dStart = dataStartRow;
   const dEnd = dStart + 997;
 
   applyDropdown_(sheet, `B${dStart}:B${dEnd}`, [
@@ -427,18 +554,23 @@ function setupSupportSheetForRecruit_(ss) {
 }
 
 /**
- * 連絡先シート（V2移行方針は応募管理シートと同様）
+ * 連絡先シート
  *
- * 重要：ensureContactHeader_()（15_Contacts.gs）は、友だち追加・
- * メッセージ受信のたびに毎回呼ばれる。旧実装は固定で1〜2行目へ
- * ヘッダー・説明行を上書きしていたため、旧データが存在する場合は
- * LINEイベントのたびに旧ヘッダーが破壊されてしまっていた。
- * ensureV2HeaderBlock_() による冪等化で、既存のV2ヘッダーがあれば
- * 何もしない（旧データへは一切書き込まない）。
+ * 方針（2026/10改訂・説明行統一）：通常の表形式シートと同じ
+ * 「1行目＝最新ヘッダー／2行目＝最新説明／3行目以降＝データ」に統一する。
+ *
+ * 重要：この関数が呼び出す ensureContactHeader_()（15_Contacts.gs）は、
+ * 友だち追加・メッセージ受信のたびに毎回呼ばれる。そのたびに1行目を
+ * 無条件で上書きするのではなく、1行目が既に最新ヘッダーと一致する
+ * 場合は書き込みをスキップする（ensureContactHeader_ 側で判定）。
+ * 2行目の説明行は ensureDescriptionRow_ により、既存の実データ行を
+ * 上書きせず安全に挿入・更新する（3行目以降の既存データ行は一切
+ * 変更しない）。
  */
 function setupContactSheetForRecruit_(ss) {
   const sheet = recreateSheet_(ss, SHEET_CONTACTS);
 
+  // （15_Contacts.gs の getContactHeaderDefinition_() と必ず一致させること）
   const headers = [
     'ユーザーID',
     'LINE表示名',
@@ -452,33 +584,39 @@ function setupContactSheetForRecruit_(ss) {
     '更新日'
   ];
 
-  const notes = [
-    'LINE userId',
-    '取得できた場合のみ',
-    'follow時に自動',
-    'メッセージ受信時に自動',
-    '友だち追加済み/やりとりあり/応募中/応募完了/ブロック不明',
-    '未応募/応募中/応募完了',
-    '未開始/2日送信済/5日送信済/7日送信済/停止/送信失敗',
-    '応募完了時に自動',
-    '自由記入',
+  // （15_Contacts.gs の getContactDescriptionRow_() と必ず一致させること）
+  const descriptionRow = [
+    'LINEから取得',
+    'LINEから取得',
+    '自動（友だち追加時）',
+    '自動（メッセージ受信時）',
+    'システム内部管理',
+    'システム内部管理',
+    'システム内部管理',
+    '応募管理と連携',
+    '手入力',
     '自動'
   ];
 
-  const block = ensureV2HeaderBlock_(sheet, headers, notes);
+  const headerRow = 1;
+  const dataStartRow = 3;
 
-  if (block.headerRow === 1) {
-    sheet.setFrozenRows(2);
-  }
+  sheet
+    .getRange(headerRow, 1, 1, headers.length)
+    .setValues([headers]);
 
-  const formatRows = Math.max(sheet.getMaxRows() - block.headerRow + 1, 1);
-  sheet.getRange(block.headerRow, 1, formatRows, headers.length).setWrap(true);
+  ensureDescriptionRow_(sheet, descriptionRow);
 
-  const dataRows = Math.max(sheet.getMaxRows() - block.dataStartRow + 1, 1);
-  sheet.getRange(block.dataStartRow, 3, dataRows, 2).setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 友だち追加日時・最終やりとり日時
-  sheet.getRange(block.dataStartRow, 10, dataRows, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 更新日
+  sheet.setFrozenRows(2);
 
-  const dStart = block.dataStartRow;
+  const formatRows = Math.max(sheet.getMaxRows() - headerRow + 1, 1);
+  sheet.getRange(headerRow, 1, formatRows, headers.length).setWrap(true);
+
+  const dataRows = Math.max(sheet.getMaxRows() - dataStartRow + 1, 1);
+  sheet.getRange(dataStartRow, 3, dataRows, 2).setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 友だち追加日時・最終やりとり日時
+  sheet.getRange(dataStartRow, 10, dataRows, 1).setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 更新日
+
+  const dStart = dataStartRow;
   const dEnd = dStart + 997;
 
   applyDropdown_(sheet, `E${dStart}:E${dEnd}`, [
@@ -507,6 +645,15 @@ function setupContactSheetForRecruit_(ss) {
   sheet.autoResizeColumns(1, headers.length);
 }
 
+/**
+ * 対応履歴シート
+ *
+ * 方針（2026/10改訂・説明行統一）：1行目＝最新ヘッダー／2行目＝最新説明／
+ * 3行目以降＝履歴データ。1行目の無条件上書きは引き続き許容するが、
+ * 2行目の説明行は ensureDescriptionRow_ により既存の履歴データを
+ * 保護しながら安全に挿入・更新する（14_SupportHistory.gs の
+ * ensureSupportHistoryHeader_ と必ず一致させること）。
+ */
 function setupSupportHistorySheetForRecruit_(ss) {
   const sheet = recreateSheet_(ss, SHEET_SUPPORT_HISTORY);
 
@@ -525,16 +672,29 @@ function setupSupportHistorySheetForRecruit_(ss) {
     .getRange(1, 1, 1, headers.length)
     .setValues([headers]);
 
-  sheet.setFrozenRows(1);
+  ensureDescriptionRow_(sheet, getSupportHistoryDescriptionRow_());
+
+  sheet.setFrozenRows(2);
   sheet.getRange('A:H').setWrap(true);
-  sheet.getRange('A:A').setNumberFormat('yyyy/mm/dd hh:mm:ss');
-  sheet.getRange('H:H').setNumberFormat('yyyy/mm/dd hh:mm:ss');
+  // 日付書式はデータ領域（3行目以降）にのみ適用し、説明行（2行目）には
+  // データ用の書式を残さない。
+  sheet.getRange('A3:A').setNumberFormat('yyyy/mm/dd hh:mm:ss');
+  sheet.getRange('H3:H').setNumberFormat('yyyy/mm/dd hh:mm:ss');
 
   try {
     sheet.hideSheet();
   } catch (error) {}
 }
 
+/**
+ * ユーザー管理シート
+ *
+ * 方針：このシートは現在の userState（Script Properties）の
+ * ライブミラーであり、syncUserStatesToSheet() が同期のたびに
+ * 行全体を再生成する使い捨てシートである（過去ログではない）ため、
+ * 毎回の全体書き換えは引き続き許容する。ここではヘッダー定義のみを
+ * 最新仕様（1枚写真フローに伴い「全身写真状態」列を削除）に更新する。
+ */
 function setupUserManagementSheetForRecruit_(ss) {
   const sheet = recreateSheet_(ss, SHEET_USER_MANAGEMENT);
 
@@ -547,7 +707,6 @@ function setupUserManagementSheetForRecruit_(ss) {
     '希望店舗',
     '写真受信数',
     '顔写真状態',
-    '全身写真状態',
     '追加回答JSON',
     '更新日',
     '応募メッセージ',
@@ -565,14 +724,26 @@ function setupUserManagementSheetForRecruit_(ss) {
     .getRange(1, 1, 1, headers.length)
     .setValues([headers]);
 
-  sheet.setFrozenRows(1);
-  sheet.getRange('A:T').setWrap(true);
-  sheet.getRange('K:K').setNumberFormat('yyyy/mm/dd hh:mm:ss');
-  sheet.getRange('S:S').setNumberFormat('yyyy/mm/dd hh:mm:ss');
+  // （18_UserManagement.gs の getUserManagementDescriptionRow_() と必ず一致させること）
+  ensureDescriptionRow_(sheet, getUserManagementDescriptionRow_());
+
+  sheet.setFrozenRows(2);
+  sheet.getRange('A:S').setWrap(true);
+  // 日付書式はデータ領域（3行目以降）にのみ適用する。
+  sheet.getRange('J3:J').setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 更新日
+  sheet.getRange('R3:R').setNumberFormat('yyyy/mm/dd hh:mm:ss'); // 応募ボタン送信日時
 
   sheet.autoResizeColumns(1, headers.length);
 }
 
+/**
+ * エラーログシート
+ *
+ * 方針（2026/10改訂・説明行統一）：1行目＝最新ヘッダー／2行目＝最新説明／
+ * 3行目以降＝ログ（追記専用）。2行目は ensureDescriptionRow_
+ * （説明は 10_CommonUtils.gs の getLogDescriptionRow_() と必ず
+ * 一致させること）により、既存ログを保護しながら安全に挿入・更新する。
+ */
 function setupErrorLogSheetForRecruit_(ss) {
   const sheet = recreateSheet_(ss, SHEET_ERROR_LOG);
 
@@ -588,13 +759,22 @@ function setupErrorLogSheetForRecruit_(ss) {
     .getRange(1, 1, 1, headers.length)
     .setValues([headers]);
 
-  sheet.setFrozenRows(1);
+  ensureDescriptionRow_(sheet, getLogDescriptionRow_());
+
+  sheet.setFrozenRows(2);
   sheet.getRange('A:E').setWrap(true);
-  sheet.getRange('A:A').setNumberFormat('yyyy/mm/dd hh:mm:ss');
+  // 日付書式はデータ領域（3行目以降）にのみ適用する。
+  sheet.getRange('A3:A').setNumberFormat('yyyy/mm/dd hh:mm:ss');
 
   sheet.autoResizeColumns(1, headers.length);
 }
 
+/**
+ * 処理ログシート
+ *
+ * 方針（2026/10改訂・説明行統一）：エラーログシートと同じ
+ * （1行目＝最新ヘッダー／2行目＝最新説明／3行目以降＝ログ）。
+ */
 function setupProcessLogSheetForRecruit_(ss) {
   const sheet = recreateSheet_(ss, SHEET_PROCESS_LOG);
 
@@ -610,9 +790,12 @@ function setupProcessLogSheetForRecruit_(ss) {
     .getRange(1, 1, 1, headers.length)
     .setValues([headers]);
 
-  sheet.setFrozenRows(1);
+  ensureDescriptionRow_(sheet, getLogDescriptionRow_());
+
+  sheet.setFrozenRows(2);
   sheet.getRange('A:E').setWrap(true);
-  sheet.getRange('A:A').setNumberFormat('yyyy/mm/dd hh:mm:ss');
+  // 日付書式はデータ領域（3行目以降）にのみ適用する。
+  sheet.getRange('A3:A').setNumberFormat('yyyy/mm/dd hh:mm:ss');
 
   sheet.autoResizeColumns(1, headers.length);
 }
@@ -686,9 +869,9 @@ function setupOperationMemoSheetForRecruit_(ss) {
 /**
  * 対応管理の「対応完了」行の色付け
  *
- * V2移行（2026/10）：対象範囲の開始行を固定の3行目ではなく、
- * V2ヘッダー以降のデータ開始行から動的に計算する。これにより、
- * 旧データ領域には新しい条件付き書式を適用しない。
+ * 方針（2026/10改訂）：対応管理シートは1行目＝ヘッダー／2行目＝説明行／
+ * 3行目以降＝実データの固定構成（応募管理と同じ理由による例外）なので、
+ * データ開始行は固定で3行目とする。
  */
 function setupSupportStatusConditionalFormat() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -701,23 +884,15 @@ function setupSupportStatusConditionalFormat() {
     return;
   }
 
-  const supportHeaders = [
-    'No', 'ステータス', '面接担当', 'LINE表示名', '応募メッセージ',
-    '名前', '合否', '面接', '体入', '本入', '対応メモ',
-    '過去応募者', '応募回数', '更新日'
-  ];
-
-  const headerRow = resolveV2HeaderRow_(sheet, supportHeaders);
-  const dataStartRow = headerRow > 0 ? headerRow + 2 : 3;
+  const dataStartRow = 3;
 
   const lastColumn = Math.max(sheet.getLastColumn(), 14);
   const targetRange = sheet.getRange(dataStartRow, 1, 998, lastColumn);
 
   const existingRules = sheet.getConditionalFormatRules();
 
-  // 旧データ領域に既に設定されている可能性のある条件付き書式ルールは
-  // 変更しない。今回のV2データ開始行（dataStartRow）に同一のルールが
-  // 既にある場合のみ、それを差し替える（setup再実行時の重複防止）。
+  // データ開始行（3行目）を対象とする既存の同種ルールがあれば差し替え、
+  // それ以外の既存ルールはそのまま残す（setup再実行時の重複防止）。
   const filteredRules = existingRules.filter(rule => {
     const ranges = rule.getRanges();
 
@@ -740,104 +915,6 @@ function setupSupportStatusConditionalFormat() {
 
   filteredRules.push(completedRule);
   sheet.setConditionalFormatRules(filteredRules);
-}
-
-/**
- * V2ヘッダー位置の検証用ユーティリティ（診断専用・非破壊）
- *
- * 位置づけ：
- * - 今回のV2ヘッダー追記方式は、「既にV2ヘッダーが存在するか」を
- *   ヘッダー配列の完全一致で自動判定する設計のため（
- *   ensureV2HeaderBlock_ 参照）、通常は setupRecruitSpreadsheet() を
- *   再実行するだけで、既存のV2テストスプレッドシート（既に一度
- *   セットアップ済みのもの）に対しても安全に追従する。
- *   そのため「データを移動する」という意味での移行処理は不要である。
- * - この関数は、その自動判定が各シートで実際にどう解決されたか
- *   （どの行をV2ヘッダーとして認識したか、新規作成したのか
- *   既存を再利用したのか）を確認するための診断専用関数であり、
- *   シートの内容は一切変更しない（ensureV2HeaderBlock_
- *   は「既に存在する場合は何もしない」ため、重複実行しても副作用はないが、
- *   本関数はあくまで確認目的でユーザーが手動実行するためのものであり、
- *   setupRecruitSpreadsheet() からは自動的に呼び出さない）。
- * - 実行結果はUIアラートとログ（Logger.log）の両方に出力する。
- */
-function migrateExistingSheetsToV2_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  const targets = [
-    {
-      name: SHEET_APPLICATIONS,
-      headers: [
-        'No', '受信日時', 'ユーザーID', 'LINE表示名', '募集媒体',
-        '募集媒体大分類', 'その他媒体', '希望店舗', '勤務日数', '年齢',
-        '備考欄', '応募メッセージ', '写真受信数', '顔写真確認',
-        '全体写真確認', '追加回答', '面接担当', '名前', '合否', '面接',
-        '体入', '本入', 'ステータス', '対応管理反映', '過去応募者',
-        '応募回数', '更新日'
-      ]
-    },
-    {
-      name: SHEET_SUPPORT,
-      headers: [
-        'No', 'ステータス', '面接担当', 'LINE表示名', '応募メッセージ',
-        '名前', '合否', '面接', '体入', '本入', '対応メモ', '過去応募者',
-        '応募回数', '更新日'
-      ]
-    },
-    {
-      name: SHEET_CONTACTS,
-      headers: [
-        'ユーザーID', 'LINE表示名', '友だち追加日時', '最終やりとり日時',
-        '状態', '応募状況', '追客ステータス', '最新応募No', 'メモ', '更新日'
-      ]
-    },
-    {
-      name: SHEET_QUESTIONS,
-      headers: [
-        '順番', '項目キー', '項目名', '質問文', '回答形式', '必須',
-        '保存列名', '有効'
-      ]
-    },
-    {
-      name: SHEET_CHOICES,
-      headers: ['項目キー', '選択肢名', '送信テキスト', '表示順', '有効']
-    }
-  ];
-
-  const lines = targets.map(target => {
-    const sheet = ss.getSheetByName(target.name);
-
-    if (!sheet) {
-      return `${target.name}: シートが存在しません（先に初期セットアップを実行してください）`;
-    }
-
-    const headerRow = resolveV2HeaderRow_(sheet, target.headers);
-    const lastRow = sheet.getLastRow();
-
-    if (headerRow === 0) {
-      return `${target.name}: V2ヘッダー未作成（setupRecruitSpreadsheet() の実行が必要）/ 最終行=${lastRow}`;
-    }
-
-    const legacyRows = headerRow - 1;
-
-    return (
-      `${target.name}: V2ヘッダー=${headerRow}行目 / ` +
-      `旧データ領域=${legacyRows > 0 ? `1〜${legacyRows}行目（${legacyRows}行）` : 'なし'} / ` +
-      `最終行=${lastRow}`
-    );
-  });
-
-  const report = lines.join('\n');
-
-  Logger.log(report);
-
-  SpreadsheetApp
-    .getUi()
-    .alert(
-      'V2ヘッダー位置の確認結果（シート内容は変更していません）',
-      report,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
 }
 
 /**

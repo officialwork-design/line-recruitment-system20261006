@@ -36,16 +36,8 @@ function addSupportRowFromApplication_(
     return;
   }
 
-  const headerRow =
-    resolveV2HeaderRow_(sheet, getSupportHeaderDefinition_());
-
   const headers =
-    headerRow > 0
-      ? sheet
-          .getRange(headerRow, 1, 1, sheet.getLastColumn())
-          .getValues()[0]
-          .map(h => String(h || '').trim())
-      : getSheetHeaders_(sheet);
+    getSheetHeaders_(sheet);
 
   const noIndex =
     headers.indexOf('No');

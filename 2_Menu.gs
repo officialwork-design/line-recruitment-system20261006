@@ -217,7 +217,9 @@ function getLastLogText_(sheetName) {
     .getActiveSpreadsheet()
     .getSheetByName(sheetName);
 
-  if (!sheet || sheet.getLastRow() < 2) return '';
+  // ログシートは1行目＝ヘッダー、2行目＝説明行のため、
+  // 実際のログが無い場合（3行目未満）は空文字を返す。
+  if (!sheet || sheet.getLastRow() < 3) return '';
 
   const row = sheet
     .getRange(

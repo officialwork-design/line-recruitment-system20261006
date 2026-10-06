@@ -22,9 +22,9 @@
  *   DONEマーカーの有無ではなく、応募管理シートを正とする
  *   hasCompletedApplication_(userId) で過去応募済みかを確認し、
  *   該当する場合は新規応募フローを開始させない。このため
- *   handleMessageEvent_ では isFinishedApplicationState_ による
- *   早期returnを行わない（行うと「応募開始ワード」そのものが
- *   handleStartText_ まで届かず、完了済み案内replyが送れなくなるため）。
+ *   handleMessageEvent_ では完了済み状態による早期returnを行わない
+ *   （行うと「応募開始ワード」そのものが handleStartText_ まで届かず、
+ *   完了済み案内replyが送れなくなるため）。
  * - 通常の新規ユーザーのfollowイベントは、従来通り応募フローを
  *   自動開始する。
  * - 応募フロー自体も簡略化（V2改修・2026/10）：顔写真・全身写真の
@@ -415,8 +415,7 @@ function handleFollowEvent_(
  *   しない。DONEマーカーのstatusはどのルーティング分岐にも一致しない
  *   ため、通常質問等は自然に無視されつつ、「応募開始ワード」だけは
  *   handleStartText_ まで届き、hasCompletedApplication_ による
- *   完了済み案内replyが送れる（isFinishedApplicationState_ は
- *   現在ここでは使用しない。詳細は本ファイル冒頭コメント参照）。
+ *   完了済み案内replyが送れる（詳細は本ファイル冒頭コメント参照）。
  */
 function handleMessageEvent_(
   event,
@@ -486,24 +485,6 @@ function resolveDisplayName_(
     getLineProfile_(userId);
 
   return profile.displayName || '';
-}
-
-/**
- * 応募完了・キャンセル状態か
- *
- * 【注】V2改修（2026/10）により handleMessageEvent_ からは
- * 呼ばれなくなり未使用（理由は本ファイル冒頭コメント・
- * handleMessageEvent_ のコメントを参照）。既存データ互換性のため
- * 関数定義は削除せず残す。
- */
-function isFinishedApplicationState_(state) {
-  return !!(
-    state &&
-    (
-      state.status === STATUS_DONE ||
-      state.status === STATUS_CANCEL
-    )
-  );
 }
 
 /**

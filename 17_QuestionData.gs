@@ -30,11 +30,7 @@ function getChoiceHeaderDefinition_() {
 }
 
 /**
- * V2移行（2026/10）：質問設定シートは「過去ログ」ではなく「現在
- * 有効な質問定義」を保持する設定シートである。旧バージョンの行が
- * そのまま残っている場合に誤って拾わないよう、V2ヘッダー以降の
- * 行だけを読む（11_SetupSpreadsheet.gs 側でV2ヘッダーは既存データの
- * 最終行の次に追記される）。
+ * 質問設定シートは1行目＝最新ヘッダー、2行目＝最新説明、3行目以降＝データ領域。
  */
 function getActiveQuestions_() {
   const cached =
@@ -51,19 +47,14 @@ function getActiveQuestions_() {
 
   if (!sheet) return [];
 
-  const headerRow =
-    resolveV2HeaderRow_(sheet, getQuestionHeaderDefinition_());
-
-  if (headerRow === 0) return [];
-
   const values =
     sheet.getDataRange().getValues();
 
-  if (values.length <= headerRow) return [];
+  if (values.length <= 2) return [];
 
   const questions =
     values
-      .slice(headerRow)
+      .slice(2)
       .filter(isActiveQuestionRow_)
       .map(questionRowToObject_)
       .sort((a, b) => Number(a.order) - Number(b.order));
@@ -88,8 +79,8 @@ function getChoicesByItemKey_(itemKey) {
 }
 
 /**
- * V2移行（2026/10）：選択肢設定シートも質問設定シートと同じ理由で、
- * V2ヘッダー以降の行だけを読む。
+ * 選択肢設定シートも質問設定シートと同じく1行目＝最新ヘッダー、
+ * 2行目＝最新説明、3行目以降＝データ領域。
  */
 function getAllChoices_() {
   const cached =
@@ -106,19 +97,14 @@ function getAllChoices_() {
 
   if (!sheet) return [];
 
-  const headerRow =
-    resolveV2HeaderRow_(sheet, getChoiceHeaderDefinition_());
-
-  if (headerRow === 0) return [];
-
   const values =
     sheet.getDataRange().getValues();
 
-  if (values.length <= headerRow) return [];
+  if (values.length <= 2) return [];
 
   const choices =
     values
-      .slice(headerRow)
+      .slice(2)
       .filter(isActiveChoiceRow_)
       .map(choiceRowToObject_)
       .sort((a, b) => Number(a.order) - Number(b.order));

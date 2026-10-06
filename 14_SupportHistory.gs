@@ -10,7 +10,28 @@
  */
 
 /**
+ * 対応履歴シートの説明行（2行目）配列
+ * （11_SetupSpreadsheet.gs の setupSupportHistorySheetForRecruit_ と
+ * 必ず一致させること）
+ */
+function getSupportHistoryDescriptionRow_() {
+  return [
+    '自動（記録日時）',
+    'LINEから取得（任意）',
+    '対応管理から取得',
+    'システム内部管理',
+    '自動生成メッセージ',
+    '対応管理と連携',
+    '応募管理と連携',
+    '自動'
+  ];
+}
+
+/**
  * 対応履歴を保存
+ *
+ * 方針（2026/10改訂・説明行統一）：1行目＝最新ヘッダー／2行目＝最新説明／
+ * 3行目以降＝履歴（追記専用）。2行目の説明行は上書きしない。
  */
 function saveSupportHistory_(params) {
   const ss =
@@ -34,7 +55,7 @@ function saveSupportHistory_(params) {
     );
 
   const targetRow =
-    Math.max(sheet.getLastRow() + 1, 2);
+    Math.max(sheet.getLastRow() + 1, 3);
 
   sheet
     .getRange(targetRow, 1, 1, row.length)
@@ -49,6 +70,12 @@ function saveSupportHistory_(params) {
 
 /**
  * 対応履歴ヘッダー保証
+ *
+ * 方針（2026/10改訂・説明行統一）：1行目は毎回最新定義で無条件上書き
+ * （対応履歴は追記専用ログであり、この上書きは許容されている）。
+ * 2行目の説明行は ensureDescriptionRow_ により、既存の履歴データ行を
+ * 保護しながら安全に挿入・更新する（3行目以降の既存履歴行には
+ * 一切触れない）。
  */
 function ensureSupportHistoryHeader_(sheet) {
   const headers = [
@@ -66,10 +93,13 @@ function ensureSupportHistoryHeader_(sheet) {
     .getRange(1, 1, 1, headers.length)
     .setValues([headers]);
 
-  sheet.setFrozenRows(1);
+  ensureDescriptionRow_(sheet, getSupportHistoryDescriptionRow_());
+
+  sheet.setFrozenRows(2);
   sheet.getRange('A:H').setWrap(true);
-  sheet.getRange('A:A').setNumberFormat('yyyy/mm/dd hh:mm:ss');
-  sheet.getRange('H:H').setNumberFormat('yyyy/mm/dd hh:mm:ss');
+  // 日付書式はデータ領域（3行目以降）にのみ適用する。
+  sheet.getRange('A3:A').setNumberFormat('yyyy/mm/dd hh:mm:ss');
+  sheet.getRange('H3:H').setNumberFormat('yyyy/mm/dd hh:mm:ss');
 }
 
 /**

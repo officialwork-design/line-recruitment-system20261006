@@ -248,7 +248,6 @@ function buildApplicationRow_(params) {
   setRowValueByHeader_(headers, row, '応募メッセージ', state.applicationMessage || '');
   setRowValueByHeader_(headers, row, '写真受信数', Number(state.photoCount || 0));
   setRowValueByHeader_(headers, row, '顔写真確認', state.facePhotoStatus || '未受信');
-  setRowValueByHeader_(headers, row, '全体写真確認', state.fullBodyPhotoStatus || '未受信');
   setRowValueByHeader_(headers, row, '追加回答', JSON.stringify(extraAnswers));
   setRowValueByHeader_(headers, row, '面接担当', '');
   setRowValueByHeader_(headers, row, '名前', state.name || extraAnswers['名前'] || extraAnswers['お名前'] || '');
@@ -341,14 +340,7 @@ function notifyApplicationToAdminSafely_(
 /**
  * 応募管理ヘッダー取得
  *
- * V2移行（2026/10）：応募管理シートはV2ヘッダー追記方式のため、
- * 1行目が常に現在のヘッダーとは限らない（旧データが残っている場合、
- * 1行目は旧バージョンのヘッダーの可能性がある）。そのため、現在の
- * コードが期待するヘッダー配列（APPLICATION_HEADERS_V2_）と完全一致
- * する行をV2ヘッダーとして解決し、その行の内容を返す。
- * 列名・列順は旧バージョンから変更していない前提のため、通常は
- * 旧ヘッダーとV2ヘッダーの内容は一致する（その場合、既存の1行目が
- * そのままV2ヘッダーとして認識される）。
+ * 応募管理シートは1行目＝常に最新ヘッダーなので、1行目をそのまま読む。
  */
 function getApplicationHeaders_() {
   const sheet =
@@ -360,20 +352,14 @@ function getApplicationHeaders_() {
     throw new Error(`Sheet not found: ${SHEET_APPLICATIONS}`);
   }
 
-  const headerRow =
-    resolveV2HeaderRow_(sheet, getApplicationHeaderDefinition_());
-
-  const rowToRead =
-    headerRow > 0 ? headerRow : 1;
-
   return sheet
-    .getRange(rowToRead, 1, 1, sheet.getLastColumn())
+    .getRange(1, 1, 1, sheet.getLastColumn())
     .getValues()[0]
     .map(h => String(h || '').trim());
 }
 
 /**
- * V2ヘッダー解決用：応募管理シートの現在のヘッダー配列
+ * 応募管理シートの現在のヘッダー配列
  * （11_SetupSpreadsheet.gs の setupApplicationSheetForRecruit_ と
  * 必ず一致させること）
  */
@@ -382,7 +368,7 @@ function getApplicationHeaderDefinition_() {
     'No', '受信日時', 'ユーザーID', 'LINE表示名', '募集媒体',
     '募集媒体大分類', 'その他媒体', '希望店舗', '勤務日数', '年齢',
     '備考欄', '応募メッセージ', '写真受信数', '顔写真確認',
-    '全体写真確認', '追加回答', '面接担当', '名前', '合否', '面接',
+    '追加回答', '面接担当', '名前', '合否', '面接',
     '体入', '本入', 'ステータス', '対応管理反映', '過去応募者',
     '応募回数', '更新日'
   ];
@@ -502,54 +488,6 @@ function countCompletedApplicationsByUserId_(userId) {
   });
 
   return count;
-}
-
-/**
- * 指定ユーザーIDの最新応募Noを取得
- */
-function getLatestApplicationNoByUserId_(userId) {
-  if (!userId) return '';
-
-  const sheet =
-    SpreadsheetApp
-      .getActiveSpreadsheet()
-      .getSheetByName(SHEET_APPLICATIONS);
-
-  if (!sheet) return '';
-
-  const headers =
-    getApplicationHeaders_();
-
-  const noCol =
-    headers.indexOf('No') + 1;
-
-  const userIdCol =
-    headers.indexOf('ユーザーID') + 1;
-
-  if (noCol <= 0 || userIdCol <= 0) {
-    return '';
-  }
-
-  const lastRow =
-    sheet.getLastRow();
-
-  if (lastRow < 3) return '';
-
-  const values =
-    sheet
-      .getRange(3, 1, lastRow - 2, sheet.getLastColumn())
-      .getValues();
-
-  for (let i = values.length - 1; i >= 0; i--) {
-    const rowUserId =
-      String(values[i][userIdCol - 1] || '').trim();
-
-    if (rowUserId === userId) {
-      return values[i][noCol - 1] || '';
-    }
-  }
-
-  return '';
 }
 
 /**
