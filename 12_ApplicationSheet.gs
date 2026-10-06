@@ -14,6 +14,21 @@
  *   管理者LINE通知はこの関数から呼ばず、ロック解放後に
  *   呼び出し元（saveCompletedApplication_）側で行う。
  * - ロック取得に失敗した場合は無言で続行せず、例外を投げる。
+ *
+ * 冪等性対策（同一応募の二重保存防止・2026/10追加）：
+ * - ロック取得直後に userState:${userId} の存在を再確認する。
+ *   既に削除されている場合、同一ユーザーの同一完了処理が
+ *   別の実行（Webhook再送等）で既に保存・削除まで完了済みと
+ *   みなし、新しい応募行を作らず null を返して処理を打ち切る。
+ * - userStateの削除（markUserDone_）は、応募管理シートへの
+ *   行書き込み・ログ出力が成功した直後・同一ロック内で行う。
+ *   これにより「保存成功 → userState削除」を実質アトミックにし、
+ *   ロック待ちしていたもう一方の重複実行が同じ応募を二重に
+ *   保存することを防ぐ。
+ * - これはLINEのWebhook再送（同一イベントの再送信）による
+ *   二重処理を主な想定ケースとした最小限の対策であり、
+ *   ユーザーが手動で同じ回答を複数回送信した場合（LINE側で
+ *   別イベントとして配信されるケース）までは防げない点に注意。
  */
 function saveApplicationFromState_(
   state,
@@ -33,6 +48,23 @@ function saveApplicationFromState_(
   }
 
   try {
+    const currentState =
+      getUserState_(userId);
+
+    if (!currentState) {
+      // userStateが既に削除されている＝同一ユーザーの同一完了処理が
+      // 別の実行で既に保存・削除まで完了済みとみなし、重複した
+      // 応募行を作らずスキップする（Webhook再送等への冪等性対策）。
+      processLog_(
+        'APPLICATION_DUPLICATE_SAVE_SKIPPED',
+        'userStateが既に削除されているため、重複保存をスキップしました（Webhook再送等の可能性）。',
+        userId,
+        ''
+      );
+
+      return null;
+    }
+
     const sheet =
       SpreadsheetApp
         .getActiveSpreadsheet()
@@ -87,6 +119,20 @@ function saveApplicationFromState_(
       userId,
       `応募No.${applicationNo}`
     );
+
+    try {
+      markUserDone_(userId);
+    } catch (cleanupError) {
+      // userState削除に失敗しても、応募管理シートへの保存自体は
+      // 既に成功しているため、保存失敗（APPLICATION_SAVE_ERROR）
+      // として扱わない。ログにのみ残す。
+      errorLog_(
+        'USER_STATE_CLEANUP_ERROR',
+        cleanupError.stack || cleanupError.message,
+        userId,
+        `応募No.${applicationNo}`
+      );
+    }
 
     addSupportRowSafely_(
       applicationNo,

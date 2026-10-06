@@ -12,11 +12,13 @@
  * - 応募完了後は userState:${userId} が削除されるため、
  *   以後のメッセージは「state無し」として扱われる
  *   （通常の未応募ユーザーと同様、質問回答等は何もせず無視される）。
- * - ただし「応募開始ワード」だけは特別に、応募管理シートを正とする
- *   hasCompletedApplication_(userId) で過去応募済みかを確認し、
- *   該当する場合は新規応募フローを開始させない（handleStartText_）。
- * - followイベント（再フォロー時の自動応募開始）は本改修の対象外。
- *   既存仕様通り、過去応募者でも follow イベントなら再度開始される。
+ * - 「応募開始ワード」（handleStartText_）とfollowイベント
+ *   （handleFollowEvent_：友だち追加・再追加）のどちらから入っても、
+ *   応募管理シートを正とする hasCompletedApplication_(userId) で
+ *   過去応募済みかを確認し、該当する場合は新規応募フローを
+ *   開始させない。
+ * - 通常の新規ユーザーのfollowイベントは、従来通り応募フローを
+ *   自動開始する。
  */
 
 /**
@@ -345,7 +347,13 @@ function getEventReplyToken_(event) {
  * - 連絡先へ登録
  * - 処理ログ
  * - 応募フローを自動開始
- * - 過去応募者でも follow イベントなら再度開始
+ *
+ * 方針（V2改修・2026/10）：
+ * - 過去応募済みユーザー（応募管理シートを正とする
+ *   hasCompletedApplication_(userId) で判定）が再度followした場合は、
+ *   handleStartText_ と同様に新しい応募フローを開始しない。
+ * - 通常の新規ユーザーのfollowイベントは、従来通り応募フローを
+ *   自動開始する。
  */
 function handleFollowEvent_(
   userId,
@@ -368,6 +376,17 @@ function handleFollowEvent_(
     userId,
     displayName
   );
+
+  if (hasCompletedApplication_(userId)) {
+    replyText_(
+      replyToken,
+      '既にご応募いただいております。ご応募ありがとうございました。',
+      'APPLICATION_ALREADY_COMPLETED_REPLY_ERROR',
+      userId
+    );
+
+    return;
+  }
 
   startApplicationFlow_(
     userId,

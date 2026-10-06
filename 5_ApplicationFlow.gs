@@ -724,11 +724,17 @@ function completeApplication_(
  *
  * 方針（V2改修・2026/10）：
  * - saveApplicationFromState_ がロック内で応募No採番〜
- *   応募管理シート保存〜対応管理追加までを行い、応募Noを返す。
- * - Contact更新・対応履歴保存・userState削除は、
- *   応募管理シートへの保存が成功した場合のみ実行される
- *   （この関数全体が completeApplication_ 側の try-catch で
- *   保護されているため、途中で例外が出れば以降は実行されない）。
+ *   応募管理シート保存〜userState削除〜対応管理追加までを行い、
+ *   応募Noを返す。
+ * - 同一ユーザーの同一完了処理が別実行で既に保存済みと判定された
+ *   場合（Webhook再送等）、saveApplicationFromState_ は
+ *   新しい行を作らず null を返す。その場合はContact更新・
+ *   対応履歴保存・管理者通知のいずれも行わず、何もせず戻る
+ *   （既に別の実行でこれらすべてが行われているため）。
+ * - Contact更新・対応履歴保存は、応募管理シートへの保存が
+ *   実際に行われた場合のみ実行される（この関数全体が
+ *   completeApplication_ 側の try-catch で保護されているため、
+ *   途中で例外が出れば以降は実行されない）。
  * - 管理者LINE通知（外部API）は、保存処理がすべて完了した
  *   最後に呼ぶ。失敗しても保存結果には影響しない
  *   （notifyApplicationToAdminSafely_ 内部で握りつぶされる）。
@@ -745,6 +751,12 @@ function saveCompletedApplication_(
       displayName
     );
 
+  if (!applicationNo) {
+    // 重複保存としてスキップされた（既に別の実行で完了済み）ため、
+    // Contact更新・対応履歴保存・管理者通知は行わない。
+    return;
+  }
+
   updateContactApplicationStatus_(
     userId,
     '応募完了',
@@ -759,10 +771,6 @@ function saveCompletedApplication_(
     supportNo: '',
     applicationNo
   });
-
-  markUserDone_(
-    userId
-  );
 
   notifyApplicationToAdminSafely_(
     applicationNo,
