@@ -9,16 +9,28 @@
  * - 再応募は応募途中のみ有効
  *
  * 方針（V2改修・2026/10）：
- * - 応募完了後は userState:${userId} が削除されるため、
- *   以後のメッセージは「state無し」として扱われる
- *   （通常の未応募ユーザーと同様、質問回答等は何もせず無視される）。
+ * - 応募完了後は userState:${userId} が削除されるのではなく、
+ *   個人情報を含まない最小限のDONEマーカー
+ *   （{ status: STATUS_DONE, applicationNo, completedAt }）に
+ *   置き換えられる（詳細は 18_UserManagement.gs の
+ *   markUserDone_ 参照）。
+ * - DONEマーカーは status が通常の応募途中ステータス一覧に含まれない
+ *   ため、routeTextAnswerByState_ のどの分岐にも一致せず、通常の
+ *   メッセージ・質問回答は自然に無視される。
  * - 「応募開始ワード」（handleStartText_）とfollowイベント
  *   （handleFollowEvent_：友だち追加・再追加）のどちらから入っても、
- *   応募管理シートを正とする hasCompletedApplication_(userId) で
- *   過去応募済みかを確認し、該当する場合は新規応募フローを
- *   開始させない。
+ *   DONEマーカーの有無ではなく、応募管理シートを正とする
+ *   hasCompletedApplication_(userId) で過去応募済みかを確認し、
+ *   該当する場合は新規応募フローを開始させない。このため
+ *   handleMessageEvent_ では isFinishedApplicationState_ による
+ *   早期returnを行わない（行うと「応募開始ワード」そのものが
+ *   handleStartText_ まで届かず、完了済み案内replyが送れなくなるため）。
  * - 通常の新規ユーザーのfollowイベントは、従来通り応募フローを
  *   自動開始する。
+ * - 応募フロー自体も簡略化（V2改修・2026/10）：顔写真・全身写真の
+ *   2枚提出をやめ、通常質問 → 事前確認事項 → 写真1枚提出 → 完了、
+ *   という順に変更した（詳細は 5_ApplicationFlow.gs /
+ *   6_ApplicationQuestions.gs / 7_ApplicationPhotos.gs 参照）。
  */
 
 /**
@@ -397,6 +409,14 @@ function handleFollowEvent_(
 
 /**
  * メッセージ受信時
+ *
+ * 方針（V2改修・2026/10）：
+ * - 完了済みユーザー（DONEマーカー）を早期returnで一律無視することは
+ *   しない。DONEマーカーのstatusはどのルーティング分岐にも一致しない
+ *   ため、通常質問等は自然に無視されつつ、「応募開始ワード」だけは
+ *   handleStartText_ まで届き、hasCompletedApplication_ による
+ *   完了済み案内replyが送れる（isFinishedApplicationState_ は
+ *   現在ここでは使用しない。詳細は本ファイル冒頭コメント参照）。
  */
 function handleMessageEvent_(
   event,
@@ -421,10 +441,6 @@ function handleMessageEvent_(
     userId,
     displayName
   );
-
-  if (isFinishedApplicationState_(state)) {
-    return;
-  }
 
   if (message.type === 'text') {
     handleTextMessage_(
@@ -474,6 +490,11 @@ function resolveDisplayName_(
 
 /**
  * 応募完了・キャンセル状態か
+ *
+ * 【注】V2改修（2026/10）により handleMessageEvent_ からは
+ * 呼ばれなくなり未使用（理由は本ファイル冒頭コメント・
+ * handleMessageEvent_ のコメントを参照）。既存データ互換性のため
+ * 関数定義は削除せず残す。
  */
 function isFinishedApplicationState_(state) {
   return !!(
@@ -659,7 +680,7 @@ function routeTextAnswerByState_(
   }
 
   if (state.status === STATUS_WAIT_REMARKS) {
-    handleRemarksAnswer_(
+    handleConfirmAnswer_(
       userId,
       displayName,
       replyToken,
@@ -673,7 +694,7 @@ function routeTextAnswerByState_(
     replyText_(
       replyToken,
       getPhotoImageErrorMessage_(
-        getFacePhotoMessage_(state)
+        getApplicationPhotoMessage_(state)
       ),
       'FACE_PHOTO_TEXT_ERROR',
       userId
@@ -708,7 +729,7 @@ function handleUnsupportedMessageDuringPhoto_(
     replyText_(
       replyToken,
       getPhotoImageErrorMessage_(
-        getFacePhotoMessage_(state)
+        getApplicationPhotoMessage_(state)
       ),
       'FACE_PHOTO_UNSUPPORTED_MESSAGE_ERROR',
       userId

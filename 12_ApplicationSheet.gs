@@ -15,18 +15,23 @@
  *   呼び出し元（saveCompletedApplication_）側で行う。
  * - ロック取得に失敗した場合は無言で続行せず、例外を投げる。
  *
- * 冪等性対策（同一応募の二重保存防止・2026/10追加）：
- * - ロック取得直後に userState:${userId} の存在を再確認する。
- *   既に削除されている場合、同一ユーザーの同一完了処理が
- *   別の実行（Webhook再送等）で既に保存・削除まで完了済みと
- *   みなし、新しい応募行を作らず null を返して処理を打ち切る。
- * - userStateの削除（markUserDone_）は、応募管理シートへの
- *   行書き込み・ログ出力が成功した直後・同一ロック内で行う。
- *   これにより「保存成功 → userState削除」を実質アトミックにし、
- *   ロック待ちしていたもう一方の重複実行が同じ応募を二重に
- *   保存することを防ぐ。
+ * 冪等性対策（同一応募の二重保存防止・2026/10改修：DONEマーカー方式）：
+ * - ロック取得直後に userState:${userId} の最新状態を再取得する。
+ *   1) stateが存在しない場合：応募途中state自体が無いため保存処理を
+ *      続行せず、応募行を新規作成しない（ログのみ残す）。
+ *   2) state.status === STATUS_DONE（DONEマーカー）の場合：同一ユーザーの
+ *      同一完了処理が別の実行（Webhook再送等）で既に保存・マーカー更新
+ *      まで完了済みとみなし、新しい応募No採番・行追加を行わず
+ *      null を返して処理を打ち切る（対応管理・対応履歴・管理者通知も
+ *      呼び出し元 saveCompletedApplication_ 側で行われない）。
+ *   3) それ以外（応募途中state）の場合：通常通り採番・保存を行う。
+ * - 応募管理シートへの行書き込み・対応管理行追加が成功した直後、
+ *   同一ロック内で markUserDone_() によりDONEマーカーへ置き換える。
+ *   これにより「保存成功 → DONEマーカー化」を実質アトミックにし、
+ *   ロック待ちしていたもう一方の重複実行が、ロック取得時点で
+ *   確実に重複を検知できる。
  * - これはLINEのWebhook再送（同一イベントの再送信）による
- *   二重処理を主な想定ケースとした最小限の対策であり、
+ *   二重処理を主な想定ケースとした冪等性ガードであり、
  *   ユーザーが手動で同じ回答を複数回送信した場合（LINE側で
  *   別イベントとして配信されるケース）までは防げない点に注意。
  */
@@ -48,16 +53,37 @@ function saveApplicationFromState_(
   }
 
   try {
-    const currentState =
+    const liveState =
       getUserState_(userId);
 
-    if (!currentState) {
-      // userStateが既に削除されている＝同一ユーザーの同一完了処理が
-      // 別の実行で既に保存・削除まで完了済みとみなし、重複した
-      // 応募行を作らずスキップする（Webhook再送等への冪等性対策）。
-      processLog_(
+    if (!liveState) {
+      // 応募途中stateが存在しない（Webhook重複等により既に処理済みで
+      // 削除・変化した可能性を含む）。保存処理を続行しない。
+      //
+      // 【注】PROCESS_LOG_ALLOWED_TYPES（1_Config.gs）に含まれない
+      // 種別はprocessLog_が無言でスキップするため、ここではerrorLog_
+      // （常に記録される）を使用する。1_Config.gsは今回の変更対象外の
+      // ため、許可リストへの追加は行わない。
+      errorLog_(
+        'APPLICATION_SAVE_SKIPPED_NO_STATE',
+        '保存時点でuserStateが存在しないため、保存をスキップしました。',
+        userId,
+        ''
+      );
+
+      return null;
+    }
+
+    if (liveState.status === STATUS_DONE) {
+      // 既にDONEマーカー化されている＝同一ユーザーの同一完了処理が
+      // 別の実行で既に保存済みとみなし、重複した応募行を作らず
+      // スキップする（Webhook再送等への冪等性対策）。
+      //
+      // 【注】同上の理由でerrorLog_を使用する（processLog_は許可リスト外
+      // の種別を無言でスキップするため）。
+      errorLog_(
         'APPLICATION_DUPLICATE_SAVE_SKIPPED',
-        'userStateが既に削除されているため、重複保存をスキップしました（Webhook再送等の可能性）。',
+        `既に応募No.${liveState.applicationNo || ''}で保存済み（DONEマーカー）のため、重複保存をスキップしました。`,
         userId,
         ''
       );
@@ -120,20 +146,6 @@ function saveApplicationFromState_(
       `応募No.${applicationNo}`
     );
 
-    try {
-      markUserDone_(userId);
-    } catch (cleanupError) {
-      // userState削除に失敗しても、応募管理シートへの保存自体は
-      // 既に成功しているため、保存失敗（APPLICATION_SAVE_ERROR）
-      // として扱わない。ログにのみ残す。
-      errorLog_(
-        'USER_STATE_CLEANUP_ERROR',
-        cleanupError.stack || cleanupError.message,
-        userId,
-        `応募No.${applicationNo}`
-      );
-    }
-
     addSupportRowSafely_(
       applicationNo,
       state,
@@ -144,6 +156,20 @@ function saveApplicationFromState_(
         applicationCount
       }
     );
+
+    try {
+      markUserDone_(userId, applicationNo);
+    } catch (cleanupError) {
+      // DONEマーカーへの置き換えに失敗しても、応募管理シートへの
+      // 保存自体は既に成功しているため、保存失敗
+      // （APPLICATION_SAVE_ERROR）として扱わない。ログにのみ残す。
+      errorLog_(
+        'USER_STATE_CLEANUP_ERROR',
+        cleanupError.stack || cleanupError.message,
+        userId,
+        `応募No.${applicationNo}`
+      );
+    }
 
     return applicationNo;
 

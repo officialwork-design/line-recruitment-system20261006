@@ -65,18 +65,21 @@ function normalizeText_(text) {
  *
  * 募集媒体 1
  * 通常質問 n
- * 顔写真 1
- * 全身写真 1
- * 備考欄 0 or 1
+ * 事前確認事項 1
+ * 写真提出 1
+ *
+ * 方針（V2改修・2026/10：応募フロー簡略化）：
+ * - 顔写真・全身写真の2枚提出をやめ、写真提出は1枚のみとする。
+ * - 「事前に伝えておきたいこと・確認事項」の質問は、質問設定シートの
+ *   remarks行の有無に関係なく、常に1ステップとして固定で数える
+ *   （質問文言・遷移は 6_ApplicationQuestions.gs の
+ *   sendConfirmQuestion_ / handleConfirmAnswer_ で固定文言として扱う）。
  */
 function getBaseApplicationSteps_() {
   const normalQuestions =
     getNormalQuestionsBeforePhoto_();
 
-  const remarksQuestion =
-    getRemarksQuestion_();
-
-  return 1 + normalQuestions.length + 2 + (remarksQuestion ? 1 : 0);
+  return 1 + normalQuestions.length + 1 + 1;
 }
 
 /**
@@ -175,7 +178,11 @@ function createInitialApplicationState_(
 }
 
 /**
- * 最初の通常質問、または顔写真へ進む
+ * 最初の通常質問、または事前確認事項の質問へ進む
+ *
+ * 方針（V2改修・2026/10：応募フロー簡略化）：
+ * - 通常質問が0件の場合でも、事前確認事項の質問は必ず実行する
+ *   （写真へ直接進めない）。
  */
 function goToFirstNormalQuestionOrPhoto_(
   userId,
@@ -187,7 +194,7 @@ function goToFirstNormalQuestionOrPhoto_(
     getNormalQuestionsBeforePhoto_();
 
   if (questions.length === 0) {
-    moveToFacePhoto_(
+    moveToConfirmQuestion_(
       userId,
       replyToken,
       state
@@ -219,9 +226,49 @@ function goToFirstNormalQuestionOrPhoto_(
 }
 
 /**
- * 顔写真待ちへ進む
+ * 事前確認事項の質問へ進む
+ *
+ * 方針（V2改修・2026/10：応募フロー簡略化）：
+ * - 通常質問がすべて終わった後（0件の場合も含む）に必ず実行する。
+ * - 質問文言・回答処理は質問設定シートに依存せず、
+ *   6_ApplicationQuestions.gs の固定文言（sendConfirmQuestion_）を使う。
+ * - ステータスは新規定数を追加せず、既存の STATUS_WAIT_REMARKS を
+ *   「事前確認事項待ち」として流用する。
  */
-function moveToFacePhoto_(
+function moveToConfirmQuestion_(
+  userId,
+  replyToken,
+  state
+) {
+  const updatedState = {
+    ...state,
+    currentQuestionNo: '',
+    status: STATUS_WAIT_REMARKS,
+    updatedAt: new Date().toISOString()
+  };
+
+  upsertUserManagement_(
+    updatedState
+  );
+
+  sendConfirmQuestion_(
+    replyToken,
+    userId,
+    updatedState
+  );
+}
+
+/**
+ * 写真提出ステップへ進む
+ *
+ * 方針（V2改修・2026/10：応募フロー簡略化）：
+ * - 写真提出は1枚のみとする（顔写真・全身写真の2段階提出は廃止）。
+ * - ステータスは新規定数を追加せず、既存の STATUS_WAIT_FACE_PHOTO を
+ *   「写真提出待ち（1枚のみ）」として流用する。
+ *   STATUS_WAIT_FULL_BODY_PHOTO は今後使用しない（既存データ互換性の
+ *   ため定数は削除せず残す）。
+ */
+function moveToPhotoStep_(
   userId,
   replyToken,
   state
@@ -239,8 +286,8 @@ function moveToFacePhoto_(
 
   replyText_(
     replyToken,
-    getFacePhotoMessage_(updatedState),
-    'FACE_PHOTO_REQUEST_ERROR',
+    getApplicationPhotoMessage_(updatedState),
+    'PHOTO_REQUEST_ERROR',
     userId
   );
 }
@@ -302,7 +349,7 @@ function handleTextAnswer_(
     );
 
   if (!nextQuestion) {
-    moveToFacePhoto_(
+    moveToConfirmQuestion_(
       userId,
       replyToken,
       updatedState
@@ -424,6 +471,12 @@ function moveToNextQuestion_(
 
 /**
  * 備考欄回答処理
+ *
+ * 【注】応募フロー簡略化（V2改修・2026/10）により、この関数は
+ * 現在どこからも呼び出されていません（未使用）。備考欄質問は
+ * 6_ApplicationQuestions.gs の sendConfirmQuestion_ /
+ * handleConfirmAnswer_（固定文言の「事前確認事項」）に置き換わりました。
+ * 既存データ互換性のため関数定義自体は削除せず残しています。
  */
 function handleRemarksAnswer_(
   userId,
@@ -708,9 +761,15 @@ function completeApplication_(
 
   } catch (error) {
     // 保存結果（成功・失敗いずれの場合も）には影響させない。
-    // replyMessages_ 内で既に errorLog_ 済みのため、ここでは
-    // 保存結果とあわせた状況確認用のログのみ残して握りつぶす。
-    processLog_(
+    // replyMessages_ 内で既に errorLog_ 済みだが、「保存結果と
+    // 合わせた状況」を確認しやすいよう補足ログを1件残して握りつぶす。
+    //
+    // 【注】'COMPLETE_REPLY_FAILED_AFTER_SAVE' は
+    // PROCESS_LOG_ALLOWED_TYPES（1_Config.gs）に含まれておらず、
+    // processLog_ では無言でスキップされてしまうため、常に記録される
+    // errorLog_ を使用する（1_Config.gsは今回の変更対象外のため、
+    // 許可リストへの追加は行わない）。
+    errorLog_(
       'COMPLETE_REPLY_FAILED_AFTER_SAVE',
       `reply失敗（保存結果: ${saveSucceeded ? '成功' : '失敗'}）: ${error.stack || error.message}`,
       userId,
@@ -724,13 +783,16 @@ function completeApplication_(
  *
  * 方針（V2改修・2026/10）：
  * - saveApplicationFromState_ がロック内で応募No採番〜
- *   応募管理シート保存〜userState削除〜対応管理追加までを行い、
+ *   応募管理シート保存〜対応管理追加〜DONEマーカー化までを行い、
  *   応募Noを返す。
- * - 同一ユーザーの同一完了処理が別実行で既に保存済みと判定された
- *   場合（Webhook再送等）、saveApplicationFromState_ は
- *   新しい行を作らず null を返す。その場合はContact更新・
- *   対応履歴保存・管理者通知のいずれも行わず、何もせず戻る
- *   （既に別の実行でこれらすべてが行われているため）。
+ * - 以下のいずれかの場合、saveApplicationFromState_ は新しい行を
+ *   作らず null を返す：
+ *     (a) 保存時点でuserStateが存在しない
+ *     (b) userStateが既にDONEマーカー（同一完了処理が別実行で
+ *         既に保存済み。Webhook再送等）
+ *   その場合はContact更新・対応履歴保存・管理者通知のいずれも
+ *   行わず、何もせず戻る（(b)の場合は既に別の実行でこれらすべてが
+ *   行われているため）。
  * - Contact更新・対応履歴保存は、応募管理シートへの保存が
  *   実際に行われた場合のみ実行される（この関数全体が
  *   completeApplication_ 側の try-catch で保護されているため、

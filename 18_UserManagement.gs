@@ -10,7 +10,10 @@
  * 方針（V2改修・2026/10）：
  * - userState:${userId} は「応募途中セッション専用」の一時データとする。
  * - 完了履歴の正（Source of Truth）は応募管理シート（hasCompletedApplication_）。
- * - 応募完了・保存成功後は markUserDone_() が対象ユーザーの userState を削除する。
+ * - 応募完了・保存成功後は markUserDone_() が対象ユーザーの userState を
+ *   削除するのではなく、個人情報を含まない最小限のDONEマーカーへ
+ *   置き換える（二重保存防止の冪等性ガードとして使用。詳細は
+ *   markUserDone_() のコメントを参照）。
  */
 
 /**
@@ -67,23 +70,41 @@ function upsertUserManagement_(data) {
 }
 
 /**
- * 応募完了後のuserStateクリーンアップ
+ * 応募完了後のuserState更新（DONEマーカーへの置き換え）
  *
- * 方針（V2改修）：
- * - 完了履歴のSource of Truthは応募管理シートに一本化する。
- * - userState:${userId} はもう「応募途中セッション専用」とし、
- *   STATUS_DONEで上書き保存するのではなく、対象ユーザーの
- *   1キーだけをdeleteProperty()で削除する。
+ * 方針（V2改修・2026/10）：
+ * - 完了履歴の恒久的なSource of Truthは引き続き応募管理シート
+ *   （hasCompletedApplication_ / countCompletedApplicationsByUserId_）。
+ *   DONEマーカーはそれを置き換えるものではない。
+ * - userState:${userId} はもう「応募途中セッション専用」の削除対象ではなく、
+ *   保存成功後に以下の最小限のDONEマーカーへ置き換える。
+ *     { status: STATUS_DONE, applicationNo, completedAt }
+ *   氏名・年齢・電話番号・店舗回答・質問回答・備考・写真状態など、
+ *   個人情報は一切含めない。
+ * - DONEマーカーの目的は、Webhook再送等による同一完了処理の
+ *   二重保存を防ぐための短期的な冪等性ガードのみ。
+ *   saveApplicationFromState_ がLock取得直後に最新userStateを
+ *   再取得し、status === STATUS_DONE であれば既に保存済みとして
+ *   処理をスキップする（12_ApplicationSheet.gs参照）。
  * - 呼び出しは必ず「応募管理シートへの保存成功後」に限定すること。
- *   保存に失敗した場合はこの関数を呼ばない（＝state を残す）。
+ *   保存に失敗した場合はこの関数を呼ばない（＝応募途中state を残す）。
  * - deleteAllProperties() は絶対に使用しない。
  */
-function markUserDone_(userId) {
+function markUserDone_(userId, applicationNo) {
   if (!userId) return;
+
+  const doneMarker = {
+    status: STATUS_DONE,
+    applicationNo: applicationNo || '',
+    completedAt: new Date().toISOString()
+  };
 
   PropertiesService
     .getScriptProperties()
-    .deleteProperty(`userState:${userId}`);
+    .setProperty(
+      `userState:${userId}`,
+      JSON.stringify(doneMarker)
+    );
 }
 
 /**

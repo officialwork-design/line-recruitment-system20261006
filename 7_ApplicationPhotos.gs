@@ -2,14 +2,22 @@
  * 7_ApplicationPhotos.gs
  * 応募写真受付
  *
- * 方針：
- * - 顔写真 → 全身写真 → 備考欄 → 完了 の順で進行
+ * 方針（V2改修・2026/10：応募フロー簡略化）：
+ * - 事前確認事項の質問（6_ApplicationQuestions.gs） → 写真1枚提出 → 完了
+ *   の順で進行する。顔写真・全身写真の2枚提出は廃止した。
  * - 現時点では画像ファイル本体は保存せず、受信状態だけ管理する
- * - 写真以外が送られた場合は再案内する
+ *   （Drive保存等は今回追加しない）。
+ * - 写真以外が送られた場合は再案内する。
+ * - 画像を1枚受信した時点で completeApplication_ を呼び、
+ *   2枚目は要求しない。
  */
 
 /**
  * 顔写真依頼メッセージ
+ *
+ * 【注】応募フロー簡略化（V2改修・2026/10）により未使用。
+ * 写真提出メッセージは getApplicationPhotoMessage_ を使用する。
+ * 既存データ互換性のため関数定義は削除せず残す。
  */
 function getFacePhotoMessage_(state) {
   return buildPhotoRequestMessage_(
@@ -21,6 +29,9 @@ function getFacePhotoMessage_(state) {
 
 /**
  * 全身写真依頼メッセージ
+ *
+ * 【注】応募フロー簡略化（V2改修・2026/10）により未使用。
+ * 既存データ互換性のため関数定義は削除せず残す。
  */
 function getFullBodyPhotoMessage_(state) {
   return buildPhotoRequestMessage_(
@@ -32,6 +43,11 @@ function getFullBodyPhotoMessage_(state) {
 
 /**
  * 写真依頼メッセージ共通作成
+ *
+ * 【注】応募フロー簡略化（V2改修・2026/10）により、
+ * getFacePhotoMessage_ / getFullBodyPhotoMessage_ 経由でのみ
+ * 参照される（どちらも未使用）。新しい写真提出メッセージは
+ * getApplicationPhotoMessage_ を使用する。
  */
 function buildPhotoRequestMessage_(
   state,
@@ -53,6 +69,24 @@ function buildPhotoRequestMessage_(
 }
 
 /**
+ * 写真提出メッセージ（応募フロー簡略化・2026/10追加：写真は1枚のみ）
+ *
+ * 写真提出は応募フロー上の最後の入力ステップのため、
+ * 常に「質問 total / total」として表示する。
+ */
+function getApplicationPhotoMessage_(state) {
+  const total =
+    getTotalApplicationSteps_(state);
+
+  const message = [
+    '最後に、あなたのお写真を1枚送ってください📷',
+    '顔がわかりやすい写真をお願いします！'
+  ].join('\n');
+
+  return `📸 質問 ${total} / ${total}\n\n${message}`;
+}
+
+/**
  * 写真以外が送られた場合のエラーメッセージ
  */
 function getPhotoImageErrorMessage_(photoMessage) {
@@ -66,6 +100,10 @@ function getPhotoImageErrorMessage_(photoMessage) {
 
 /**
  * 画像メッセージ受信処理
+ *
+ * 方針（V2改修・2026/10：応募フロー簡略化）：
+ * - 写真は1枚のみ。画像を1枚受信した時点で completeApplication_ を呼び、
+ *   2枚目は要求しない（proceedToFullBodyPhoto_ 等は呼ばない）。
  */
 function handleImageMessage_(
   message,
@@ -101,24 +139,12 @@ function handleImageMessage_(
       state
     );
 
-  if (state.status === STATUS_WAIT_FACE_PHOTO) {
-    proceedToFullBodyPhoto_(
-      userId,
-      replyToken,
-      updatedState
-    );
-
-    return;
-  }
-
-  if (state.status === STATUS_WAIT_FULL_BODY_PHOTO) {
-    proceedAfterFullBodyPhoto_(
-      userId,
-      displayName,
-      replyToken,
-      updatedState
-    );
-  }
+  completeApplication_(
+    userId,
+    displayName,
+    replyToken,
+    updatedState
+  );
 }
 
 /**
@@ -135,35 +161,29 @@ function isWaitingPhotoStatus_(status) {
 
 /**
  * 写真受信後の状態を作成
+ *
+ * 方針（V2改修・2026/10：応募フロー簡略化）：
+ * - 写真は1枚のみ。受信した1枚を facePhotoStatus に記録する。
+ * - fullBodyPhotoStatus は今回のフローでは使用しない
+ *   （既存データ互換性のためフィールド自体は残す。常に未設定のまま）。
+ * - ステータス遷移は行わない（受信後はこのまま completeApplication_
+ *   を呼ぶため、呼び出し元の handleImageMessage_ 側で完結する）。
  */
 function buildPhotoReceivedState_(state) {
-  const newPhotoCount =
-    Number(state.photoCount || 0) + 1;
-
-  const updatedState = {
+  return {
     ...state,
-    photoCount: newPhotoCount,
+    photoCount: Number(state.photoCount || 0) + 1,
+    facePhotoStatus: PHOTO_RECEIVED_TEXT,
     updatedAt: new Date().toISOString()
   };
-
-  if (state.status === STATUS_WAIT_FACE_PHOTO) {
-    updatedState.status =
-      STATUS_WAIT_FULL_BODY_PHOTO;
-
-    updatedState.facePhotoStatus =
-      PHOTO_RECEIVED_TEXT;
-  }
-
-  if (state.status === STATUS_WAIT_FULL_BODY_PHOTO) {
-    updatedState.fullBodyPhotoStatus =
-      PHOTO_RECEIVED_TEXT;
-  }
-
-  return updatedState;
 }
 
 /**
  * 顔写真受信後、全身写真へ進む
+ *
+ * 【注】応募フロー簡略化（V2改修・2026/10）により、
+ * handleImageMessage_ から呼ばれなくなり未使用。
+ * 既存データ互換性のため関数定義は削除せず残す。
  */
 function proceedToFullBodyPhoto_(
   userId,
@@ -184,6 +204,9 @@ function proceedToFullBodyPhoto_(
 
 /**
  * 全身写真受信後、備考欄または完了へ進む
+ *
+ * 【注】応募フロー簡略化（V2改修・2026/10）により未使用。
+ * 既存データ互換性のため関数定義は削除せず残す。
  */
 function proceedAfterFullBodyPhoto_(
   userId,
@@ -215,6 +238,9 @@ function proceedAfterFullBodyPhoto_(
 
 /**
  * 備考欄へ進む
+ *
+ * 【注】応募フロー簡略化（V2改修・2026/10）により未使用。
+ * 既存データ互換性のため関数定義は削除せず残す。
  */
 function proceedToRemarksQuestion_(
   userId,

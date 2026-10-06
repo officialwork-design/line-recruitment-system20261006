@@ -45,12 +45,137 @@ function getQuestionProgressText_(question, state) {
 
 /**
  * 備考欄の進捗テキスト
+ *
+ * 【注】応募フロー簡略化（V2改修・2026/10）により未使用。
+ * 事前確認事項の進捗テキストは getConfirmProgressText_ を使用する。
  */
 function getRemarksProgressText_(state) {
   const total =
     getTotalApplicationSteps_(state);
 
   return `📮 質問 ${total} / ${total}\n\n`;
+}
+
+/**
+ * 事前確認事項の質問文言（応募フロー簡略化・2026/10追加）
+ *
+ * 方針：
+ * - 旧・備考欄（質問設定シートの remarks 行）を廃止し、
+ *   募集媒体の質問（質問1）と同様に、質問設定シートに依存しない
+ *   固定文言として送信する。
+ * - 通常質問が何問あっても（0問でも）、この質問は必ず
+ *   「写真提出の直前」に1回だけ実行される。
+ * - 回答後は completeApplication_ を直接呼ばず、写真提出ステップ
+ *   （moveToPhotoStep_）へ進む。
+ */
+const CONFIRM_QUESTION_TEXT =
+  '事前に伝えておきたいことや、確認しておきたいことがあれば教えてください！\n特になければ「なし」と送ってください。';
+
+/**
+ * 事前確認事項の進捗テキスト
+ *
+ * 常に「写真提出の1つ前」の番号として表示する
+ * （質問 total-1 / total）。
+ */
+function getConfirmProgressText_(state) {
+  const total =
+    getTotalApplicationSteps_(state);
+
+  return `📮 質問 ${total - 1} / ${total}\n\n`;
+}
+
+/**
+ * 事前確認事項の質問送信
+ */
+function sendConfirmQuestion_(
+  replyToken,
+  userId,
+  state
+) {
+  replyText_(
+    replyToken,
+    `${getConfirmProgressText_(state)}${CONFIRM_QUESTION_TEXT}`,
+    'CONFIRM_QUESTION_ERROR',
+    userId
+  );
+}
+
+/**
+ * 事前確認事項の回答処理
+ *
+ * 方針（V2改修・2026/10：応募フロー簡略化）：
+ * - 自由入力を受け付ける（「なし」を含む）。空回答のみ再入力を促す。
+ * - 回答後は completeApplication_ を直接呼ばず、写真提出ステップへ進む。
+ */
+function handleConfirmAnswer_(
+  userId,
+  displayName,
+  replyToken,
+  state,
+  text
+) {
+  if (!isValidTextAnswer_(text, true)) {
+    replyText_(
+      replyToken,
+      [
+        '⚠️ 必須項目です。',
+        '入力をお願いします。特になければ「なし」と送ってください。',
+        '',
+        `${getConfirmProgressText_(state)}${CONFIRM_QUESTION_TEXT}`
+      ].join('\n'),
+      'EMPTY_CONFIRM_ANSWER_ERROR',
+      userId
+    );
+
+    return;
+  }
+
+  const updatedState =
+    applyConfirmAnswerToState_(
+      state,
+      text,
+      displayName
+    );
+
+  moveToPhotoStep_(
+    userId,
+    replyToken,
+    updatedState
+  );
+}
+
+/**
+ * 事前確認事項の回答をstateへ反映
+ *
+ * 既存の応募管理シート列「備考欄」をそのまま使用する
+ * （新しい列は追加しない）。
+ */
+function applyConfirmAnswerToState_(
+  state,
+  answer,
+  displayName
+) {
+  const extraAnswers =
+    parseJsonSafe_(state.extraAnswers || '{}');
+
+  extraAnswers['備考欄'] =
+    answer;
+
+  const mergedApplicationMessage =
+    buildApplicationMessage_({
+      currentMessage: state.applicationMessage || '',
+      label: '事前確認事項',
+      answer
+    });
+
+  return {
+    ...state,
+    displayName: displayName || state.displayName || '',
+    remarks: answer,
+    extraAnswers: JSON.stringify(extraAnswers),
+    applicationMessage: mergedApplicationMessage,
+    updatedAt: new Date().toISOString()
+  };
 }
 
 /**
