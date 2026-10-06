@@ -340,6 +340,15 @@ function notifyApplicationToAdminSafely_(
 
 /**
  * 応募管理ヘッダー取得
+ *
+ * V2移行（2026/10）：応募管理シートはV2ヘッダー追記方式のため、
+ * 1行目が常に現在のヘッダーとは限らない（旧データが残っている場合、
+ * 1行目は旧バージョンのヘッダーの可能性がある）。そのため、現在の
+ * コードが期待するヘッダー配列（APPLICATION_HEADERS_V2_）と完全一致
+ * する行をV2ヘッダーとして解決し、その行の内容を返す。
+ * 列名・列順は旧バージョンから変更していない前提のため、通常は
+ * 旧ヘッダーとV2ヘッダーの内容は一致する（その場合、既存の1行目が
+ * そのままV2ヘッダーとして認識される）。
  */
 function getApplicationHeaders_() {
   const sheet =
@@ -351,10 +360,32 @@ function getApplicationHeaders_() {
     throw new Error(`Sheet not found: ${SHEET_APPLICATIONS}`);
   }
 
+  const headerRow =
+    resolveV2HeaderRow_(sheet, getApplicationHeaderDefinition_());
+
+  const rowToRead =
+    headerRow > 0 ? headerRow : 1;
+
   return sheet
-    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getRange(rowToRead, 1, 1, sheet.getLastColumn())
     .getValues()[0]
     .map(h => String(h || '').trim());
+}
+
+/**
+ * V2ヘッダー解決用：応募管理シートの現在のヘッダー配列
+ * （11_SetupSpreadsheet.gs の setupApplicationSheetForRecruit_ と
+ * 必ず一致させること）
+ */
+function getApplicationHeaderDefinition_() {
+  return [
+    'No', '受信日時', 'ユーザーID', 'LINE表示名', '募集媒体',
+    '募集媒体大分類', 'その他媒体', '希望店舗', '勤務日数', '年齢',
+    '備考欄', '応募メッセージ', '写真受信数', '顔写真確認',
+    '全体写真確認', '追加回答', '面接担当', '名前', '合否', '面接',
+    '体入', '本入', 'ステータス', '対応管理反映', '過去応募者',
+    '応募回数', '更新日'
+  ];
 }
 
 /**

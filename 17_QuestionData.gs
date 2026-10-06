@@ -8,6 +8,34 @@
  * - 既存関数名は維持
  */
 
+/**
+ * 質問設定シートのヘッダー配列
+ * （11_SetupSpreadsheet.gs の setupQuestionSheetForRecruit_ と
+ * 必ず一致させること）
+ */
+function getQuestionHeaderDefinition_() {
+  return [
+    '順番', '項目キー', '項目名', '質問文', '回答形式', '必須',
+    '保存列名', '有効'
+  ];
+}
+
+/**
+ * 選択肢設定シートのヘッダー配列
+ * （11_SetupSpreadsheet.gs の setupChoiceSheetForRecruit_ と
+ * 必ず一致させること）
+ */
+function getChoiceHeaderDefinition_() {
+  return ['項目キー', '選択肢名', '送信テキスト', '表示順', '有効'];
+}
+
+/**
+ * V2移行（2026/10）：質問設定シートは「過去ログ」ではなく「現在
+ * 有効な質問定義」を保持する設定シートである。旧バージョンの行が
+ * そのまま残っている場合に誤って拾わないよう、V2ヘッダー以降の
+ * 行だけを読む（11_SetupSpreadsheet.gs 側でV2ヘッダーは既存データの
+ * 最終行の次に追記される）。
+ */
 function getActiveQuestions_() {
   const cached =
     getJsonCache_('activeQuestions');
@@ -23,14 +51,19 @@ function getActiveQuestions_() {
 
   if (!sheet) return [];
 
+  const headerRow =
+    resolveV2HeaderRow_(sheet, getQuestionHeaderDefinition_());
+
+  if (headerRow === 0) return [];
+
   const values =
     sheet.getDataRange().getValues();
 
-  if (values.length <= 1) return [];
+  if (values.length <= headerRow) return [];
 
   const questions =
     values
-      .slice(1)
+      .slice(headerRow)
       .filter(isActiveQuestionRow_)
       .map(questionRowToObject_)
       .sort((a, b) => Number(a.order) - Number(b.order));
@@ -54,6 +87,10 @@ function getChoicesByItemKey_(itemKey) {
     .sort((a, b) => Number(a.order) - Number(b.order));
 }
 
+/**
+ * V2移行（2026/10）：選択肢設定シートも質問設定シートと同じ理由で、
+ * V2ヘッダー以降の行だけを読む。
+ */
 function getAllChoices_() {
   const cached =
     getJsonCache_('allChoices');
@@ -69,14 +106,19 @@ function getAllChoices_() {
 
   if (!sheet) return [];
 
+  const headerRow =
+    resolveV2HeaderRow_(sheet, getChoiceHeaderDefinition_());
+
+  if (headerRow === 0) return [];
+
   const values =
     sheet.getDataRange().getValues();
 
-  if (values.length <= 1) return [];
+  if (values.length <= headerRow) return [];
 
   const choices =
     values
-      .slice(1)
+      .slice(headerRow)
       .filter(isActiveChoiceRow_)
       .map(choiceRowToObject_)
       .sort((a, b) => Number(a.order) - Number(b.order));

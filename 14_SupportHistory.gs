@@ -286,6 +286,13 @@ function createBackfillSupportHistories_(
 
     if (!supportNo) return;
 
+    // V2移行（2026/10）：対応管理シートの途中に挟まるV2ヘッダー・
+    // 説明行（No列が "No" や "自動" になっている行）を、過去データとして
+    // 誤って反映しないようにする。
+    if (!isLikelySupportNo_(supportNo)) {
+      return;
+    }
+
     if (supportNo.indexOf('問い合わせ-') === 0) {
       return;
     }

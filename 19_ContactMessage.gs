@@ -170,6 +170,11 @@ function sendLineMessageToContacts_(
 
 /**
  * 送信対象取得
+ *
+ * V2移行（2026/10）：LINEメッセージの送信対象は、本番からコピーされた
+ * 可能性のある連絡先シートの旧データ領域を含めず、必ずV2データ領域
+ * （V2ヘッダーの次の行以降）のみから選定する。V2ヘッダーが見つからない
+ * 場合は、安全側に倒して送信対象なし（0件）として扱う。
  */
 function getTargetContactsByType_(type) {
   const ss =
@@ -184,17 +189,27 @@ function getTargetContactsByType_(type) {
     );
   }
 
+  const headerRow =
+    resolveV2HeaderRow_(sheet, getContactHeaderDefinition_());
+
+  if (headerRow === 0) {
+    return [];
+  }
+
+  const dataStartRow =
+    headerRow + 2;
+
   const lastRow =
     sheet.getLastRow();
 
-  if (lastRow < 3) {
+  if (lastRow < dataStartRow) {
     return [];
   }
 
   const headers =
     sheet
       .getRange(
-        1,
+        headerRow,
         1,
         1,
         sheet.getLastColumn()
@@ -205,9 +220,9 @@ function getTargetContactsByType_(type) {
   const values =
     sheet
       .getRange(
-        3,
+        dataStartRow,
         1,
-        lastRow - 2,
+        lastRow - dataStartRow + 1,
         sheet.getLastColumn()
       )
       .getValues();
@@ -359,6 +374,12 @@ function installUnappliedFollowupTrigger() {
     .alert('未応募者追客の自動送信トリガーを設定しました。毎日13時台に実行されます。');
 }
 
+/**
+ * V2移行（2026/10）：追客（未応募者へのリマインド）の自動送信対象も、
+ * 旧データ領域（本番からコピーされた可能性がある連絡先）には一切
+ * 送信しない。必ずV2データ領域のみを対象にする。V2ヘッダーが見つから
+ * ない場合は、安全側に倒して何もしない。
+ */
 function sendUnappliedFollowupMessages() {
   const ss =
     SpreadsheetApp.getActiveSpreadsheet();
@@ -372,22 +393,32 @@ function sendUnappliedFollowupMessages() {
 
   ensureContactHeader_();
 
+  const headerRow =
+    resolveV2HeaderRow_(sheet, getContactHeaderDefinition_());
+
+  if (headerRow === 0) {
+    return;
+  }
+
+  const dataStartRow =
+    headerRow + 2;
+
   const lastRow =
     sheet.getLastRow();
 
-  if (lastRow < 3) {
+  if (lastRow < dataStartRow) {
     return;
   }
 
   const headers =
     sheet
-      .getRange(1, 1, 1, sheet.getLastColumn())
+      .getRange(headerRow, 1, 1, sheet.getLastColumn())
       .getValues()[0]
       .map(h => String(h || '').trim());
 
   const values =
     sheet
-      .getRange(3, 1, lastRow - 2, sheet.getLastColumn())
+      .getRange(dataStartRow, 1, lastRow - dataStartRow + 1, sheet.getLastColumn())
       .getValues();
 
   let successCount = 0;
@@ -396,7 +427,7 @@ function sendUnappliedFollowupMessages() {
 
   values.forEach((row, index) => {
     const rowNumber =
-      index + 3;
+      index + dataStartRow;
 
     const target =
       buildFollowupTargetFromRow_(

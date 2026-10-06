@@ -36,8 +36,16 @@ function addSupportRowFromApplication_(
     return;
   }
 
+  const headerRow =
+    resolveV2HeaderRow_(sheet, getSupportHeaderDefinition_());
+
   const headers =
-    getSheetHeaders_(sheet);
+    headerRow > 0
+      ? sheet
+          .getRange(headerRow, 1, 1, sheet.getLastColumn())
+          .getValues()[0]
+          .map(h => String(h || '').trim())
+      : getSheetHeaders_(sheet);
 
   const noIndex =
     headers.indexOf('No');
@@ -102,6 +110,19 @@ function supportNoExists_(
   return values.some(row => {
     return String(row[0] || '').trim() === target;
   });
+}
+
+/**
+ * 対応管理シートの現在のヘッダー配列
+ * （11_SetupSpreadsheet.gs の setupSupportSheetForRecruit_ と
+ * 必ず一致させること）
+ */
+function getSupportHeaderDefinition_() {
+  return [
+    'No', 'ステータス', '面接担当', 'LINE表示名', '応募メッセージ',
+    '名前', '合否', '面接', '体入', '本入', '対応メモ', '過去応募者',
+    '応募回数', '更新日'
+  ];
 }
 
 /**
@@ -667,7 +688,10 @@ function syncApplicationsToSupportManual() {
     const applicationNo =
       String(appRow[appNoCol - 1] || '').trim();
 
-    if (!applicationNo) {
+    // V2移行（2026/10）：途中に挟まるV2ヘッダー・説明行
+    // （No列に "No" や "自動" といった非データ文字列が入っている行）を
+    // 誤って同期対象として扱わないよう、有効なNo形式かを確認する。
+    if (!applicationNo || !isLikelySupportNo_(applicationNo)) {
       skippedCount++;
       return;
     }
@@ -730,7 +754,10 @@ function buildSupportRowMap_(
     const no =
       String(row[supportNoCol - 1] || '').trim();
 
-    if (no && no.indexOf('問い合わせ-') !== 0) {
+    // V2移行（2026/10）：途中に挟まるV2ヘッダー・説明行を
+    // 応募Noとして誤認識しないよう、数値形式のみを対象にする
+    // （"問い合わせ-" 始まりの行はもともと対象外）。
+    if (no && no.indexOf('問い合わせ-') !== 0 && !isNaN(Number(no))) {
       map[no] = index + 3;
     }
   });

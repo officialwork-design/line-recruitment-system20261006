@@ -81,7 +81,25 @@ function updateContactApplicationStatus_(
 }
 
 /**
+ * 連絡先シートのヘッダー配列
+ * （11_SetupSpreadsheet.gs の setupContactSheetForRecruit_ と
+ * 必ず一致させること）
+ */
+function getContactHeaderDefinition_() {
+  return [
+    'ユーザーID', 'LINE表示名', '友だち追加日時', '最終やりとり日時',
+    '状態', '応募状況', '追客ステータス', '最新応募No', 'メモ', '更新日'
+  ];
+}
+
+/**
  * 連絡先の共通登録/更新処理
+ *
+ * V2移行（2026/10）：連絡先シートの旧データ領域（本番からコピーされた
+ * 可能性のある既存の連絡先）には一切書き込まない。新規の登録・更新は
+ * 必ずV2ヘッダー以降のデータ領域内でのみ行う（同一ユーザーIDの行が
+ * 旧データ領域に存在していても、それは更新せず、V2データ領域に
+ * 新しい行を作成する）。
  */
 function upsertContact_(params) {
   const ss =
@@ -95,9 +113,22 @@ function upsertContact_(params) {
 
   ensureContactHeader_();
 
+  const block =
+    ensureV2HeaderBlock_(
+      sheet,
+      getContactHeaderDefinition_(),
+      getContactNoteRowDefinition_()
+    );
+
+  const headerRow =
+    block.headerRow;
+
+  const dataStartRow =
+    block.dataStartRow;
+
   const headers =
     sheet
-      .getRange(1, 1, 1, sheet.getLastColumn())
+      .getRange(headerRow, 1, 1, sheet.getLastColumn())
       .getValues()[0]
       .map(h => String(h || '').trim());
 
@@ -105,9 +136,10 @@ function upsertContact_(params) {
     findContactRowByUserId_(
       sheet,
       headers,
-      params.userId
+      params.userId,
+      dataStartRow
     ) ||
-    Math.max(sheet.getLastRow() + 1, 3);
+    Math.max(sheet.getLastRow() + 1, dataStartRow);
 
   const existingRow =
     getContactRowValues_(
@@ -269,32 +301,12 @@ function upsertContact_(params) {
 }
 
 /**
- * 連絡先シートのヘッダーを保証
+ * 連絡先シートの説明行（備考）
+ * （11_SetupSpreadsheet.gs の setupContactSheetForRecruit_ と
+ * 必ず一致させること）
  */
-function ensureContactHeader_() {
-  const ss =
-    SpreadsheetApp.getActiveSpreadsheet();
-
-  const sheet =
-    getOrCreateSheet_(
-      ss,
-      SHEET_CONTACTS
-    );
-
-  const headers = [
-    'ユーザーID',
-    'LINE表示名',
-    '友だち追加日時',
-    '最終やりとり日時',
-    '状態',
-    '応募状況',
-    '追客ステータス',
-    '最新応募No',
-    'メモ',
-    '更新日'
-  ];
-
-  const notes = [
+function getContactNoteRowDefinition_() {
+  return [
     'LINE userId',
     '取得できた場合のみ',
     'follow時に自動',
@@ -306,51 +318,88 @@ function ensureContactHeader_() {
     '自由記入',
     '自動'
   ];
+}
+
+/**
+ * 連絡先シートのヘッダーを保証
+ *
+ * V2移行（2026/10）：友だち追加・メッセージ受信のたびに毎回呼ばれる
+ * 関数であるため、旧実装のように1〜2行目を無条件で上書きすることは
+ * しない。ensureV2HeaderBlock_ により、既にV2ヘッダーが存在する場合は
+ * 何もしない（旧データ領域には一切触れない）。
+ */
+function ensureContactHeader_() {
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const sheet =
+    getOrCreateSheet_(
+      ss,
+      SHEET_CONTACTS
+    );
+
+  const headers =
+    getContactHeaderDefinition_();
+
+  const notes =
+    getContactNoteRowDefinition_();
+
+  const block =
+    ensureV2HeaderBlock_(sheet, headers, notes);
+
+  if (block.headerRow === 1) {
+    sheet.setFrozenRows(2);
+  }
+
+  const formatRows =
+    Math.max(sheet.getMaxRows() - block.headerRow + 1, 1);
 
   sheet
-    .getRange(1, 1, 1, headers.length)
-    .setValues([headers]);
-
-  sheet
-    .getRange(2, 1, 1, notes.length)
-    .setValues([notes]);
-
-  sheet.setFrozenRows(2);
-
-  sheet
-    .getRange(1, 1, 2, headers.length)
+    .getRange(block.headerRow, 1, formatRows, headers.length)
     .setWrap(true);
 
+  const dataRows =
+    Math.max(sheet.getMaxRows() - block.dataStartRow + 1, 1);
+
   sheet
-    .getRange('C:D')
+    .getRange(block.dataStartRow, 3, dataRows, 2)
     .setNumberFormat('yyyy/mm/dd hh:mm:ss');
 
   sheet
-    .getRange('J:J')
+    .getRange(block.dataStartRow, 10, dataRows, 1)
     .setNumberFormat('yyyy/mm/dd hh:mm:ss');
 }
 
 /**
  * ユーザーIDから連絡先行を探す
+ *
+ * V2移行（2026/10）：startRow（通常はV2データ開始行）より前の行、
+ * つまり旧データ領域は検索対象に含めない。旧データ領域に同一の
+ * ユーザーIDが存在していても、それを更新対象にはしない（新しい行を
+ * V2データ領域に作成する）。
  */
 function findContactRowByUserId_(
   sheet,
   headers,
-  userId
+  userId,
+  startRow
 ) {
   const userIdCol =
     headers.indexOf('ユーザーID') + 1;
 
   if (userIdCol <= 0) return 0;
 
+  const searchStartRow =
+    startRow || 3;
+
   const lastRow =
     sheet.getLastRow();
 
-  if (lastRow < 3) return 0;
+  if (lastRow < searchStartRow) return 0;
 
   const values =
     sheet
-      .getRange(3, userIdCol, lastRow - 2, 1)
+      .getRange(searchStartRow, userIdCol, lastRow - searchStartRow + 1, 1)
       .getValues();
 
   const targetUserId =
@@ -361,7 +410,7 @@ function findContactRowByUserId_(
       String(values[i][0] || '').trim();
 
     if (rowUserId === targetUserId) {
-      return i + 3;
+      return i + searchStartRow;
     }
   }
 
