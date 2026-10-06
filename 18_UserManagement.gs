@@ -6,6 +6,11 @@
  * - 応募中の状態は ScriptProperties に保存
  * - ユーザー管理シートは確認・運用用の同期先
  * - syncUserStatesToSheet() は全削除せず、必要範囲だけ更新する
+ *
+ * 方針（V2改修・2026/10）：
+ * - userState:${userId} は「応募途中セッション専用」の一時データとする。
+ * - 完了履歴の正（Source of Truth）は応募管理シート（hasCompletedApplication_）。
+ * - 応募完了・保存成功後は markUserDone_() が対象ユーザーの userState を削除する。
  */
 
 /**
@@ -62,32 +67,23 @@ function upsertUserManagement_(data) {
 }
 
 /**
- * 応募完了状態に変更
+ * 応募完了後のuserStateクリーンアップ
+ *
+ * 方針（V2改修）：
+ * - 完了履歴のSource of Truthは応募管理シートに一本化する。
+ * - userState:${userId} はもう「応募途中セッション専用」とし、
+ *   STATUS_DONEで上書き保存するのではなく、対象ユーザーの
+ *   1キーだけをdeleteProperty()で削除する。
+ * - 呼び出しは必ず「応募管理シートへの保存成功後」に限定すること。
+ *   保存に失敗した場合はこの関数を呼ばない（＝state を残す）。
+ * - deleteAllProperties() は絶対に使用しない。
  */
-function markUserDone_(
-  state,
-  userId,
-  displayName
-) {
-  upsertUserManagement_({
-    userId,
-    displayName: displayName || state.displayName || '',
-    currentQuestionNo: '',
-    status: STATUS_DONE,
-    name: state.name || '',
-    store: state.store || '',
-    media: state.media || '',
-    mediaOtherFlow: state.mediaOtherFlow || 'FALSE',
-    totalSteps: state.totalSteps || '',
-    photoCount: Number(state.photoCount || 0),
-    facePhotoStatus: state.facePhotoStatus || '',
-    fullBodyPhotoStatus: state.fullBodyPhotoStatus || '',
-    extraAnswers: state.extraAnswers || '{}',
-    applicationMessage: state.applicationMessage || '',
-    age: state.age || '',
-    remarks: state.remarks || '',
-    updatedAt: new Date().toISOString()
-  });
+function markUserDone_(userId) {
+  if (!userId) return;
+
+  PropertiesService
+    .getScriptProperties()
+    .deleteProperty(`userState:${userId}`);
 }
 
 /**

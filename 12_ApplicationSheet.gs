@@ -5,86 +5,105 @@
 
 /**
  * 応募状態を応募管理へ保存
+ *
+ * 方針（V2改修・2026/10）：
+ * - 応募No採番〜応募管理シート書き込み〜対応管理追加までを
+ *   LockService.getScriptLock() で同一ロック内に収め、
+ *   同時完了時の応募No重複・行競合を防ぐ。
+ * - ロック中は外部API通信（UrlFetchApp）を一切行わない。
+ *   管理者LINE通知はこの関数から呼ばず、ロック解放後に
+ *   呼び出し元（saveCompletedApplication_）側で行う。
+ * - ロック取得に失敗した場合は無言で続行せず、例外を投げる。
  */
 function saveApplicationFromState_(
   state,
   userId,
   displayName
 ) {
-  const sheet =
-    SpreadsheetApp
-      .getActiveSpreadsheet()
-      .getSheetByName(SHEET_APPLICATIONS);
+  const lock =
+    LockService.getScriptLock();
 
-  if (!sheet) {
-    throw new Error(`Sheet not found: ${SHEET_APPLICATIONS}`);
+  const gotLock =
+    lock.tryLock(10000);
+
+  if (!gotLock) {
+    throw new Error(
+      '応募データ保存の排他ロックを取得できませんでした（LOCK_TIMEOUT）。'
+    );
   }
 
-  const headers =
-    getApplicationHeaders_();
+  try {
+    const sheet =
+      SpreadsheetApp
+        .getActiveSpreadsheet()
+        .getSheetByName(SHEET_APPLICATIONS);
 
-  const extraAnswers =
-    parseJsonSafe_(state.extraAnswers || '{}');
+    if (!sheet) {
+      throw new Error(`Sheet not found: ${SHEET_APPLICATIONS}`);
+    }
 
-  const applicationNo =
-    generateApplicationNo_();
+    const headers =
+      getApplicationHeaders_();
 
-  const pastApplicationCount =
-    countCompletedApplicationsByUserId_(userId);
+    const extraAnswers =
+      parseJsonSafe_(state.extraAnswers || '{}');
 
-  const applicationCount =
-    pastApplicationCount + 1;
+    const applicationNo =
+      generateApplicationNo_();
 
-  const applicationHistoryStatus =
-    pastApplicationCount > 0
-      ? '再応募'
-      : '初回';
+    const pastApplicationCount =
+      countCompletedApplicationsByUserId_(userId);
 
-  const row =
-    buildApplicationRow_({
-      headers,
+    const applicationCount =
+      pastApplicationCount + 1;
+
+    const applicationHistoryStatus =
+      pastApplicationCount > 0
+        ? '再応募'
+        : '初回';
+
+    const row =
+      buildApplicationRow_({
+        headers,
+        state,
+        userId,
+        displayName,
+        extraAnswers,
+        applicationNo,
+        applicationHistoryStatus,
+        applicationCount
+      });
+
+    const targetRow =
+      Math.max(sheet.getLastRow() + 1, 3);
+
+    sheet
+      .getRange(targetRow, 1, 1, row.length)
+      .setValues([row]);
+
+    processLog_(
+      'APPLICATION_SAVED',
+      '応募管理へ保存しました。',
+      userId,
+      `応募No.${applicationNo}`
+    );
+
+    addSupportRowSafely_(
+      applicationNo,
       state,
       userId,
       displayName,
-      extraAnswers,
-      applicationNo,
-      applicationHistoryStatus,
-      applicationCount
-    });
+      {
+        applicationHistoryStatus,
+        applicationCount
+      }
+    );
 
-  const targetRow =
-    Math.max(sheet.getLastRow() + 1, 3);
+    return applicationNo;
 
-  sheet
-    .getRange(targetRow, 1, 1, row.length)
-    .setValues([row]);
-
-  processLog_(
-    'APPLICATION_SAVED',
-    '応募管理へ保存しました。',
-    userId,
-    `応募No.${applicationNo}`
-  );
-
-  addSupportRowSafely_(
-    applicationNo,
-    state,
-    userId,
-    displayName,
-    {
-      applicationHistoryStatus,
-      applicationCount
-    }
-  );
-
-  notifyApplicationToAdminSafely_(
-    applicationNo,
-    state,
-    userId,
-    displayName
-  );
-
-  return applicationNo;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**

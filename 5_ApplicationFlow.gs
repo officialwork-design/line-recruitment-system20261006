@@ -653,6 +653,12 @@ function buildApplicationMessage_(
 
 /**
  * 応募完了処理
+ *
+ * 方針（V2改修・2026/10）：
+ * - 応募データの保存を最優先する。LINEへの完了replyは保存の後に行う。
+ * - reply送信（replyMessages_）に失敗しても、既に保存済みの
+ *   応募データは巻き戻らない（保存とreplyを互いに独立させる）。
+ * - reply失敗はログに残すが、例外を外へ伝播させない。
  */
 function completeApplication_(
   userId,
@@ -665,12 +671,7 @@ function completeApplication_(
       state
     );
 
-  replyMessages_(
-    replyToken,
-    buildCompleteReplyMessages_(normalizedState),
-    'COMPLETE_REPLY_ERROR',
-    userId
-  );
+  let saveSucceeded = false;
 
   try {
     saveCompletedApplication_(
@@ -678,6 +679,9 @@ function completeApplication_(
       displayName,
       normalizedState
     );
+
+    saveSucceeded = true;
+
   } catch (error) {
     processLog_(
       'APPLICATION_SAVE_ERROR',
@@ -693,29 +697,58 @@ function completeApplication_(
       displayName
     );
   }
+
+  try {
+    replyMessages_(
+      replyToken,
+      buildCompleteReplyMessages_(normalizedState),
+      'COMPLETE_REPLY_ERROR',
+      userId
+    );
+
+  } catch (error) {
+    // 保存結果（成功・失敗いずれの場合も）には影響させない。
+    // replyMessages_ 内で既に errorLog_ 済みのため、ここでは
+    // 保存結果とあわせた状況確認用のログのみ残して握りつぶす。
+    processLog_(
+      'COMPLETE_REPLY_FAILED_AFTER_SAVE',
+      `reply失敗（保存結果: ${saveSucceeded ? '成功' : '失敗'}）: ${error.stack || error.message}`,
+      userId,
+      displayName
+    );
+  }
 }
 
 /**
  * 応募完了後の保存一式
+ *
+ * 方針（V2改修・2026/10）：
+ * - saveApplicationFromState_ がロック内で応募No採番〜
+ *   応募管理シート保存〜対応管理追加までを行い、応募Noを返す。
+ * - Contact更新・対応履歴保存・userState削除は、
+ *   応募管理シートへの保存が成功した場合のみ実行される
+ *   （この関数全体が completeApplication_ 側の try-catch で
+ *   保護されているため、途中で例外が出れば以降は実行されない）。
+ * - 管理者LINE通知（外部API）は、保存処理がすべて完了した
+ *   最後に呼ぶ。失敗しても保存結果には影響しない
+ *   （notifyApplicationToAdminSafely_ 内部で握りつぶされる）。
  */
 function saveCompletedApplication_(
   userId,
   displayName,
   normalizedState
 ) {
-  saveApplicationFromState_(
-    normalizedState,
-    userId,
-    displayName
-  );
-
-  const latestApplicationNo =
-    getLatestApplicationNoByUserId_(userId);
+  const applicationNo =
+    saveApplicationFromState_(
+      normalizedState,
+      userId,
+      displayName
+    );
 
   updateContactApplicationStatus_(
     userId,
     '応募完了',
-    latestApplicationNo
+    applicationNo
   );
 
   saveSupportHistory_({
@@ -724,10 +757,15 @@ function saveCompletedApplication_(
     type: '応募完了',
     message: normalizedState.applicationMessage || '',
     supportNo: '',
-    applicationNo: latestApplicationNo
+    applicationNo
   });
 
   markUserDone_(
+    userId
+  );
+
+  notifyApplicationToAdminSafely_(
+    applicationNo,
     normalizedState,
     userId,
     displayName

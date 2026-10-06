@@ -6,8 +6,17 @@
  * - doPost は必ず OK を返してWebhook落下を防ぐ
  * - イベント単位で try-catch し、1件の失敗で全体を止めない
  * - 個人チャット、グループ、ルームを分岐
- * - 応募完了後は通常メッセージも応募開始も無視
  * - 再応募は応募途中のみ有効
+ *
+ * 方針（V2改修・2026/10）：
+ * - 応募完了後は userState:${userId} が削除されるため、
+ *   以後のメッセージは「state無し」として扱われる
+ *   （通常の未応募ユーザーと同様、質問回答等は何もせず無視される）。
+ * - ただし「応募開始ワード」だけは特別に、応募管理シートを正とする
+ *   hasCompletedApplication_(userId) で過去応募済みかを確認し、
+ *   該当する場合は新規応募フローを開始させない（handleStartText_）。
+ * - followイベント（再フォロー時の自動応募開始）は本改修の対象外。
+ *   既存仕様通り、過去応募者でも follow イベントなら再度開始される。
  */
 
 /**
@@ -536,6 +545,13 @@ function handleRestartText_(
 
 /**
  * 応募開始ワード処理
+ *
+ * 方針（V2改修・2026/10）：
+ * - userState削除後も「完了済みユーザーは新規応募を開始できない」
+ *   という現行仕様を維持するため、userStateの有無だけで判定せず、
+ *   応募管理シートを正とする hasCompletedApplication_(userId) で
+ *   過去応募済みかどうかを確認する。
+ * - 応募途中ユーザーのルーティング（isApplicationInProgress_判定）は変更しない。
  */
 function handleStartText_(
   userId,
@@ -556,6 +572,17 @@ function handleStartText_(
       replyToken,
       `⚠️ すでに応募途中です。\nこのまま続けて回答してください。\n\n最初からやり直す場合は「${RESTART_WORD}」と入力してください。`,
       'APPLICATION_ALREADY_STARTED_REPLY_ERROR',
+      userId
+    );
+
+    return;
+  }
+
+  if (hasCompletedApplication_(userId)) {
+    replyText_(
+      replyToken,
+      '既にご応募いただいております。ご応募ありがとうございました。',
+      'APPLICATION_ALREADY_COMPLETED_REPLY_ERROR',
       userId
     );
 
