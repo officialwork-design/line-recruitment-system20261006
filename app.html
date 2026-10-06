@@ -1,0 +1,85 @@
+<script>
+  function setLoading(isLoading) {
+    document.body.classList.toggle('loading', isLoading);
+  }
+
+  function maskId(value) {
+    if (!value) return '-';
+
+    var text = String(value);
+
+    if (text.length <= 12) {
+      return text;
+    }
+
+    return text.slice(0, 6) + '...' + text.slice(-6);
+  }
+
+  function setText(id, value) {
+    var element = document.getElementById(id);
+
+    if (!element) {
+      return;
+    }
+
+    element.textContent = value;
+  }
+
+  function reloadDashboard() {
+    setLoading(true);
+
+    google.script.run
+      .withSuccessHandler(function(data) {
+        data = data || {};
+
+        var adminGroupId = data.adminGroupId || '';
+
+        setText('applicationCount', data.applicationCount || 0);
+        setText('questionCount', data.questionCount || 0);
+        setText('startWord', data.startWord || '-');
+        setText('applyButtonUserId', maskId(data.applyButtonUserId || ''));
+        setText('adminGroupId', maskId(adminGroupId));
+        setText('lastError', data.lastError || 'なし');
+        setText('lastProcess', data.lastProcess || 'なし');
+
+        var statusEl = document.getElementById('adminGroupStatus');
+
+        if (statusEl) {
+          if (adminGroupId) {
+            statusEl.textContent = '設定済み';
+            statusEl.className = 'value status-ok';
+          } else {
+            statusEl.textContent = '未設定';
+            statusEl.className = 'value status-ng';
+          }
+        }
+
+        setLoading(false);
+      })
+      .withFailureHandler(function(error) {
+        alert((error && error.message) ? error.message : error);
+        setLoading(false);
+      })
+      .getAdminDashboardData();
+  }
+
+  function runServerFunction(functionName) {
+    if (!functionName) {
+      return;
+    }
+
+    setLoading(true);
+
+    google.script.run
+      .withSuccessHandler(function() {
+        setLoading(false);
+        reloadDashboard();
+      })
+      .withFailureHandler(function(error) {
+        alert((error && error.message) ? error.message : error);
+        setLoading(false);
+      })[functionName]();
+  }
+
+  window.onload = reloadDashboard;
+</script>

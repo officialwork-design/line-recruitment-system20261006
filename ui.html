@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: Arial, "Hiragino Sans", "Yu Gothic", sans-serif;
+      margin: 0;
+      background: #f7f8fa;
+      color: #222;
+    }
+
+    .header {
+      background: #06C755;
+      color: #fff;
+      padding: 18px 24px;
+      font-size: 22px;
+      font-weight: bold;
+    }
+
+    .container {
+      padding: 24px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+
+    .value {
+      font-size: 26px;
+      font-weight: bold;
+      margin: 8px 0;
+      word-break: break-all;
+    }
+
+    .label {
+      color: #666;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    button {
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: bold;
+      background: #06C755;
+      color: #fff;
+    }
+
+    button.secondary { background: #4285F4; }
+    button.warning { background: #F4B400; color: #222; }
+    button.danger { background: #DB4437; }
+    button.gray { background: #666; }
+
+    .log {
+      white-space: pre-wrap;
+      background: #f1f3f4;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      min-height: 50px;
+      overflow-wrap: break-word;
+      line-height: 1.6;
+    }
+
+    .full {
+      grid-column: 1 / -1;
+    }
+
+    .loading {
+      opacity: 0.6;
+      pointer-events: none;
+    }
+
+    .status-ok {
+      color: #0B8043;
+      font-weight: bold;
+    }
+
+    .status-ng {
+      color: #DB4437;
+      font-weight: bold;
+    }
+
+    @media (max-width: 720px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .full {
+        grid-column: auto;
+      }
+
+      .container {
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="header">求人管理</div>
+
+  <div class="container">
+    <div class="grid">
+      <div class="card">
+        <h2>応募数</h2>
+        <div class="value" id="applicationCount">-</div>
+        <div class="label">応募管理シートの登録件数</div>
+      </div>
+
+      <div class="card">
+        <h2>質問数</h2>
+        <div class="value" id="questionCount">-</div>
+        <div class="label">募集媒体・写真・備考込み</div>
+      </div>
+
+      <div class="card">
+        <h2>開始ワード</h2>
+        <div class="value" id="startWord">-</div>
+        <div class="label">LINEで「応募開始」と完全一致した時だけ開始</div>
+      </div>
+
+      <div class="card">
+        <h2>応募ボタン送信先</h2>
+        <div class="value" id="applyButtonUserId" style="font-size: 14px;">-</div>
+        <div class="label">設定シート APPLY_BUTTON_USER_ID</div>
+      </div>
+
+      <div class="card">
+        <h2>管理者グループID</h2>
+        <div class="value" id="adminGroupId" style="font-size: 14px;">-</div>
+        <div class="label">
+          設定シート ADMIN_GROUP_ID<br>
+          応募通知・再メンションの送信先
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>通知設定</h2>
+        <div class="value" id="adminGroupStatus" style="font-size: 18px;">-</div>
+        <div class="label">管理者グループ通知の設定状態</div>
+      </div>
+
+      <div class="card full">
+        <h2>操作</h2>
+        <div class="buttons">
+          <button onclick="runServerFunction('clearSystemCache')">キャッシュをクリア</button>
+          <button class="secondary" onclick="runServerFunction('syncUserStatesToSheet')">ユーザー状態を同期</button>
+          <button class="secondary" onclick="runServerFunction('setupContactSheetOnly')">連絡先シート作成</button>
+          <button class="secondary" onclick="runServerFunction('installSupportApplicationSyncTrigger')">同期トリガー設定</button>
+          <button class="secondary" onclick="runServerFunction('syncApplicationsToSupportManual')">応募管理→対応管理 同期</button>
+          <button class="warning" onclick="runServerFunction('backfillSupportActionHistory')">過去履歴を反映</button>
+          <button class="warning" onclick="runServerFunction('resendApplicationMentionByPrompt')">応募Noで再メンション</button>
+          <button class="secondary" onclick="runServerFunction('sendApplyButtonToConfiguredUser')">設定USERIDへ応募ボタン送信</button>
+          <button class="secondary" onclick="runServerFunction('sendApplyButtonToUser')">USERID入力で応募ボタン送信</button>
+          <button class="warning" onclick="runServerFunction('setupRichMenuConfigSheet')">リッチメニュー設定作成</button>
+          <button class="warning" onclick="runServerFunction('createApplyRichMenuFromSheet')">リッチメニュー作成</button>
+          <button class="gray" onclick="runServerFunction('listRichMenus')">リッチメニュー一覧</button>
+          <button class="gray" onclick="runServerFunction('enableGroupIdLog')">グループID確認ログON</button>
+          <button class="gray" onclick="runServerFunction('disableGroupIdLog')">グループID確認ログOFF</button>
+          <button class="gray" onclick="reloadDashboard()">再読み込み</button>
+        </div>
+      </div>
+
+      <div class="card full">
+        <h2>グループID取得手順</h2>
+        <div class="log">1. 「グループID確認ログON」を押す
+2. 通知したいLINEグループで何かメッセージを送る
+3. エラーログの「LINE_SOURCE_ID」を確認する
+4. 設定シートの「ADMIN_GROUP_ID」のB列に貼り付ける
+5. 「グループID確認ログOFF」を押す
+6. 「キャッシュをクリア」を押す</div>
+      </div>
+
+      <div class="card full">
+        <h2>最新エラー / ログ</h2>
+        <div class="log" id="lastError">-</div>
+      </div>
+
+      <div class="card full">
+        <h2>最新処理</h2>
+        <div class="log" id="lastProcess">-</div>
+      </div>
+    </div>
+  </div>
+
+  <?!= include('app'); ?>
+</body>
+</html>
